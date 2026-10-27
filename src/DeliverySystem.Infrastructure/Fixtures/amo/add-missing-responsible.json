@@ -1,0 +1,13 @@
+{
+  "eventType": "update_lead",
+  "amoLeadId": 9006,
+  "pipelineId": 1,
+  "stageId": 100,
+  "stageName": "Готов к доставке",
+  "responsibleAmoUserId": null,
+  "requestedDate": "2026-10-27",
+  "pointExternalId": 7001,
+  "items": [
+    { "productName": "Зразы", "quantity": 9, "unit": "kg", "weight": 9 }
+  ]
+}

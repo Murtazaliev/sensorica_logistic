@@ -1,0 +1,180 @@
+@page "/orders"
+@attribute [Authorize(Roles = "Dispatcher,Admin,Head")]
+@using DeliverySystem.Core.Domain
+@using DeliverySystem.Infrastructure.Persistence
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>Заказы — DeliverySystem</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>Заказы</h1>
+        <p class="muted">
+            Рабочее место диспетчера: все заказы из amoCRM, фильтры и переход в карточку.
+            Обновлено @_loadedAt.ToLocalTime().ToString("HH:mm:ss")
+            · <a href="/sync">создать тестовый заказ</a>
+        </p>
+    </div>
+    <button class="btn" @onclick="LoadAsync" disabled="@_loading">Обновить</button>
+</div>
+
+<div class="stats">
+    <div class="stat"><span>@_orders.Count</span><label>всего</label></div>
+    <div class="stat"><span>@(_orders.Count(o => o.Status == OrderStatus.New))</span><label>новых</label></div>
+    <div class="stat"><span>@(_orders.Count(o => o.IsDeferred))</span><label>перенесено</label></div>
+    <div class="stat"><span>@(_orders.Count(o => o.IsBlockedByPointApproval))</span><label>заблокировано</label></div>
+</div>
+
+<div class="filters">
+    <input class="input" placeholder="Номер, точка, лид..." @bind="_search" @bind:event="oninput" />
+    <select class="input" @bind="_statusFilter">
+        <option value="">Все статусы</option>
+        @foreach (var status in Enum.GetValues<OrderStatus>())
+        {
+            <option value="@status">@StatusDisplay.Label(status)</option>
+        }
+    </select>
+    <select class="input" @bind="_dateFilter">
+        <option value="all">Все даты</option>
+        <option value="today">Сегодня</option>
+        <option value="tomorrow">Завтра</option>
+        <option value="deferred">Перенесённые</option>
+    </select>
+    <span class="muted">Показано: @Filtered.Count()</span>
+</div>
+
+@if (_loading)
+{
+    <p class="muted">Загрузка...</p>
+}
+else if (_error is not null)
+{
+    <div class="alert error">@_error</div>
+}
+else if (!Filtered.Any())
+{
+    <div class="empty">
+        Заказов нет. Создайте их через <a href="/sync">ленту синка</a> — симуляция amoCRM.
+    </div>
+}
+else
+{
+    <div class="card table-card">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Номер</th>
+                    <th>Точка</th>
+                    <th>Дата</th>
+                    <th>Статус</th>
+                    <th>Вес</th>
+                    <th>Позиции</th>
+                    <th>Лид amoCRM</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var order in Filtered)
+                {
+                    <tr>
+                        <td>
+                            <a class="row-link" href="@($"/orders/{order.Id}")">@order.OrderNumber</a>
+                            @if (order.IsDeferred)
+                            {
+                                <span class="tag">перенос</span>
+                            }
+                        </td>
+                        <td>
+                            @(order.Point?.Name ?? "—")
+                            @if (order.IsBlockedByPointApproval)
+                            {
+                                <span class="tag warn">модерация</span>
+                            }
+                        </td>
+                        <td>@order.RequestedDate.ToString("dd.MM.yyyy")</td>
+                        <td><span class="badge @StatusDisplay.CssClass(order.Status)">@StatusDisplay.Label(order.Status)</span></td>
+                        <td>@order.TotalWeight.ToString("0.###") кг</td>
+                        <td>@order.Items.Count</td>
+                        <td>@(order.AmoLeadId?.ToString() ?? "—")</td>
+                        <td><a class="btn small" href="@($"/orders/{order.Id}")">Открыть</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<Order> _orders = [];
+    private bool _loading;
+    private string? _error;
+    private string _search = string.Empty;
+    private string _statusFilter = string.Empty;
+    private string _dateFilter = "all";
+    private DateTimeOffset _loadedAt;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            _orders = await db.Orders
+                .AsNoTracking()
+                .Where(o => o.TenantId == DevSeed.TenantId)
+                .Include(o => o.Point)
+                .Include(o => o.Items)
+                .ToListAsync();
+
+            _loadedAt = DateTimeOffset.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private IEnumerable<Order> Filtered
+    {
+        get
+        {
+            IEnumerable<Order> query = _orders;
+
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var term = _search.Trim();
+                query = query.Where(o =>
+                    o.OrderNumber.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (o.Point?.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (o.AmoLeadId?.ToString().Contains(term) ?? false));
+            }
+
+            if (Enum.TryParse<OrderStatus>(_statusFilter, out var status))
+            {
+                query = query.Where(o => o.Status == status);
+            }
+
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            query = _dateFilter switch
+            {
+                "today" => query.Where(o => o.RequestedDate == today),
+                "tomorrow" => query.Where(o => o.RequestedDate == today.AddDays(1)),
+                "deferred" => query.Where(o => o.IsDeferred),
+                _ => query
+            };
+
+            return query.OrderBy(o => o.RequestedDate).ThenBy(o => o.OrderNumber);
+        }
+    }
+}

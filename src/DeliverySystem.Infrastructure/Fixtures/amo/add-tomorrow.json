@@ -1,0 +1,13 @@
+{
+  "eventType": "update_lead",
+  "amoLeadId": 9004,
+  "pipelineId": 1,
+  "stageId": 100,
+  "stageName": "Готов к доставке",
+  "responsibleAmoUserId": 503,
+  "requestedDate": "2026-10-28",
+  "pointExternalId": 7001,
+  "items": [
+    { "productName": "Голубцы", "quantity": 8, "unit": "kg", "weight": 8 }
+  ]
+}

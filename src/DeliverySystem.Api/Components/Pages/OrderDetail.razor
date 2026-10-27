@@ -1,0 +1,284 @@
+@page "/orders/{Id:guid}"
+@attribute [Authorize(Roles = "Dispatcher,Admin,Head")]
+@using DeliverySystem.Core.Domain
+@using DeliverySystem.Core.Sync
+@using DeliverySystem.Infrastructure.Persistence
+@using DeliverySystem.Infrastructure.Sync
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+<PageTitle>@(_order is null ? "Заказ" : _order.OrderNumber)</PageTitle>
+
+<div class="page-head">
+    <div>
+        <a class="back" href="/orders">← К заказам</a>
+        <h1>@(_order?.OrderNumber ?? "Заказ")</h1>
+        @if (_order is not null)
+        {
+            <p class="muted">
+                Лид amoCRM: @(_order.AmoLeadId?.ToString() ?? "—")
+                · версия @_order.Version
+                · обновлён @_order.UpdatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+            </p>
+        }
+    </div>
+    @if (_order is not null)
+    {
+        <span class="badge @StatusDisplay.CssClass(_order.Status)">@StatusDisplay.Label(_order.Status)</span>
+    }
+</div>
+
+@if (_loading)
+{
+    <p class="muted">Загрузка...</p>
+}
+else if (_error is not null)
+{
+    <div class="alert error">@_error</div>
+}
+else if (_order is null)
+{
+    <div class="empty">Заказ не найден. <a href="/orders">К заказам</a></div>
+}
+else
+{
+    @if (_message is not null)
+    {
+        <div class="alert @(_isError ? "error" : "success")">@_message</div>
+    }
+
+    <div class="detail-grid">
+        <section class="card">
+            <h2>Доставка</h2>
+            <dl class="kv">
+                <dt>Точка</dt>
+                <dd>
+                    @(_order.Point?.Name ?? "—")
+                    · <a href="/points">на карте 2ГИС</a>
+                </dd>
+                <dt>Адрес</dt>
+                <dd>@(_order.Point?.Address ?? "—")</dd>
+                <dt>Координаты</dt>
+                <dd>
+                    @if (_order.Point?.Latitude is not null && _order.Point?.Longitude is not null)
+                    {
+                        <span>@_order.Point.Latitude.Value.ToString("0.00000", System.Globalization.CultureInfo.InvariantCulture), @_order.Point.Longitude.Value.ToString("0.00000", System.Globalization.CultureInfo.InvariantCulture)</span>
+                    }
+                    else
+                    {
+                        <span class="muted">не заданы</span>
+                    }
+                </dd>
+                <dt>Телефон</dt>
+                <dd>@(_order.Point?.Phone ?? "—")</dd>
+                <dt>Дата</dt>
+                <dd>@_order.RequestedDate.ToString("dd.MM.yyyy")</dd>
+                <dt>Исходная дата</dt>
+                <dd>@_order.OriginalRequestedDate.ToString("dd.MM.yyyy")</dd>
+                <dt>Перенос</dt>
+                <dd>@DeferredLabel(_order)</dd>
+                <dt>Блокировка точкой</dt>
+                <dd>@(_order.IsBlockedByPointApproval ? "да, точка на модерации" : "нет")</dd>
+                <dt>Получен</dt>
+                <dd>@_order.ReceivedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</dd>
+            </dl>
+        </section>
+
+        <section class="card">
+            <h2>Смена статуса</h2>
+            @if (AllowedTargets.Any())
+            {
+                <label class="field-label" for="comment">Комментарий</label>
+                <input id="comment" class="input" @bind="_comment" placeholder="Необязательно" />
+
+                <div class="actions">
+                    @foreach (var target in AllowedTargets)
+                    {
+                        <button class="btn" @onclick="() => ApplyAsync(target)" disabled="@_busy">
+                            → @StatusDisplay.Label(target)
+                        </button>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="muted">Для статуса «@StatusDisplay.Label(_order.Status)» нет доступных переходов.</p>
+            }
+
+            <p class="hint">
+                Изменение идёт тем же путём, что и синк курьера:
+                запись истории + change feed + инкремент версии.
+            </p>
+        </section>
+    </div>
+
+    <section class="card">
+        <h2>Позиции <span class="muted">(@_order.Items.Count)</span></h2>
+        <table class="table compact">
+            <thead>
+                <tr><th>Наименование</th><th>Кол-во</th><th>Ед.</th><th>Вес</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var item in _order.Items)
+                {
+                    <tr>
+                        <td>@item.ProductName</td>
+                        <td>@item.Quantity.ToString("0.###")</td>
+                        <td>@item.Unit</td>
+                        <td>@item.Weight.ToString("0.###") кг</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="totals">Итого: @(_order.Items.Sum(i => i.Weight).ToString("0.###")) кг</p>
+    </section>
+
+    <section class="card">
+        <h2>История</h2>
+        @if (_order.StatusHistory.Count == 0)
+        {
+            <p class="muted">Записей нет.</p>
+        }
+        else
+        {
+            <ol class="timeline">
+                @foreach (var entry in _order.StatusHistory.OrderByDescending(h => h.ChangedAt))
+                {
+                    <li>
+                        <div class="timeline-head">
+                            <span class="badge @StatusDisplay.CssClass(entry.ToStatus)">@StatusDisplay.Label(entry.ToStatus)</span>
+                            <span class="muted">@entry.ChangedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</span>
+                            @if (entry.FromStatus is not null)
+                            {
+                                <span class="muted">из «@StatusDisplay.Label(entry.FromStatus.Value)»</span>
+                            }
+                            <span class="tag">@(entry.IsSystemAction ? "система" : "пользователь")</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(entry.Comment))
+                        {
+                            <div>@StatusDisplay.HistoryComment(entry.Comment)</div>
+                        }
+                    </li>
+                }
+            </ol>
+        }
+    </section>
+}
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private static readonly OrderStatus[] DispatcherTargets =
+    [
+        OrderStatus.Scheduled,
+        OrderStatus.Accepted,
+        OrderStatus.InTransit,
+        OrderStatus.Problem,
+        OrderStatus.Cancelled
+    ];
+
+    private Order? _order;
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+    private string? _message;
+    private bool _isError;
+    private string? _comment;
+
+    private IEnumerable<OrderStatus> AllowedTargets => _order is null
+        ? []
+        : DispatcherTargets.Where(
+            target => target != _order.Status && OrderStatusTransitions.IsAllowed(_order.Status, target));
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            _order = await db.Orders
+                .AsNoTracking()
+                .Include(o => o.Point)
+                .Include(o => o.Items)
+                .Include(o => o.StatusHistory)
+                .FirstOrDefaultAsync(o => o.Id == Id && o.TenantId == DevSeed.TenantId);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ApplyAsync(OrderStatus target)
+    {
+        if (_order is null || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        _message = null;
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var sync = new SyncService(db);
+
+            var operation = new SyncPushOperation(
+                Guid.NewGuid(),
+                SyncOperationType.SetOrderStatus,
+                SyncJson.Serialize(new SetOrderStatusPayload(_order.Id, target, _order.Version, _comment)),
+                DateTimeOffset.UtcNow);
+
+            var result = await sync.PushAsync(
+                DevSeed.TenantId,
+                new SyncPushRequest("dispatcher-web", [operation]));
+
+            var outcome = result.Results[0];
+            _isError = outcome.Status != SyncOperationStatus.Applied;
+            _message = _isError
+                ? StatusDisplay.OperationError(outcome.Error)
+                : $"Статус изменён на «{StatusDisplay.Label(target)}»";
+            _comment = null;
+        }
+        catch (Exception ex)
+        {
+            _isError = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await LoadAsync();
+    }
+
+    private static string DeferredLabel(Order order)
+    {
+        if (!order.IsDeferred)
+        {
+            return "нет";
+        }
+
+        return order.DeferredReason switch
+        {
+            OrderDeferredReason.AfterCutoff => "после cutoff 10:00",
+            OrderDeferredReason.InvalidDate => "некорректная дата",
+            OrderDeferredReason.Manual => "вручную",
+            _ => "да"
+        };
+    }
+}

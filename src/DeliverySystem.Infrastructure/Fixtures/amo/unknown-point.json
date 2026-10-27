@@ -1,0 +1,13 @@
+{
+  "eventType": "update_lead",
+  "amoLeadId": 9003,
+  "pipelineId": 1,
+  "stageId": 100,
+  "stageName": "Готов к доставке",
+  "responsibleAmoUserId": 506,
+  "requestedDate": "2026-10-27",
+  "pointExternalId": 9999,
+  "items": [
+    { "productName": "Сырники", "quantity": 6, "unit": "kg", "weight": 6 }
+  ]
+}

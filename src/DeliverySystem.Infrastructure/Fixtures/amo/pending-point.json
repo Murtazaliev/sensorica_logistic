@@ -1,0 +1,13 @@
+{
+  "eventType": "update_lead",
+  "amoLeadId": 9002,
+  "pipelineId": 1,
+  "stageId": 100,
+  "stageName": "Готов к доставке",
+  "responsibleAmoUserId": 505,
+  "requestedDate": "2026-10-27",
+  "pointExternalId": 7002,
+  "items": [
+    { "productName": "Вареники", "quantity": 15, "unit": "kg", "weight": 15 }
+  ]
+}

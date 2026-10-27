@@ -1,0 +1,671 @@
+@page "/points"
+@attribute [Authorize(Roles = "Dispatcher,Admin,Head")]
+@using System.Globalization
+@using DeliverySystem.Core.Domain
+@using DeliverySystem.Core.Maps
+@using DeliverySystem.Core.Points
+@using DeliverySystem.Infrastructure.Maps
+@using DeliverySystem.Infrastructure.Points
+@using Microsoft.Extensions.Configuration
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IServiceScopeFactory ScopeFactory
+@inject IJSRuntime Js
+@inject IConfiguration Configuration
+
+<PageTitle>Точки на карте — DeliverySystem</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>Точки доставки (2ГИС)</h1>
+        <p class="muted">
+            Кликните по карте, чтобы выбрать координаты, или введите адрес — 2ГИС определит точку.
+            Пин можно открыть для редактирования и модерации.
+        </p>
+    </div>
+    <div class="actions" style="margin-top:0">
+        <button class="btn primary" @onclick="StartNewAsync">+ Новая точка</button>
+        <button class="btn" @onclick="ReloadAsync" disabled="@_loading">Обновить</button>
+    </div>
+</div>
+
+<div class="stats">
+    <div class="stat"><span>@_points.Count</span><label>всего точек</label></div>
+    <div class="stat"><span>@(_points.Count(p => p.ApprovalStatus == PointApprovalStatus.Active))</span><label>активных</label></div>
+    <div class="stat"><span>@(_points.Count(p => p.ApprovalStatus == PointApprovalStatus.PendingApproval))</span><label>на модерации</label></div>
+    <div class="stat"><span>@(_points.Count(p => p.Latitude is not null && p.Longitude is not null))</span><label>на карте</label></div>
+</div>
+
+@if (_message is not null)
+{
+    <div class="alert @(_isError ? "error" : "success")">@_message</div>
+}
+
+<div class="points-layout">
+    <section class="card">
+        <h2>@(_editId is null ? "Новая точка" : "Редактирование точки")</h2>
+
+        <div class="form-field">
+            <label class="field-label">Название точки</label>
+            <input class="input" placeholder="Например: Кафе Уют" @bind="_name" />
+        </div>
+
+        <div class="form-field">
+            <label class="field-label">Адрес</label>
+            <div class="address-row">
+                <input class="input" placeholder="Начните вводить адрес" value="@_address" @oninput="OnAddressInput" />
+                <button type="button" class="btn" @onclick="FindAddressAsync" disabled="@_geocodeBusy">
+                    @(_geocodeBusy ? "Ищу..." : "Найти")
+                </button>
+            </div>
+
+            @if (_suggestions.Count > 0)
+            {
+                <div class="suggest-list">
+                    @foreach (var suggestion in _suggestions)
+                    {
+                        <button type="button" class="suggest-item" @onclick="() => SelectSuggestionAsync(suggestion)">
+                            <strong>@suggestion.Name</strong>
+                            @if (!string.IsNullOrWhiteSpace(suggestion.FullName)
+                                 && !string.Equals(suggestion.FullName, suggestion.Name, StringComparison.Ordinal))
+                            {
+                                <small>@suggestion.FullName</small>
+                            }
+                        </button>
+                    }
+                </div>
+            }
+
+            @if (_addressHint is not null)
+            {
+                <p class="hint">@_addressHint</p>
+            }
+        </div>
+
+        <div class="form-grid">
+            <div class="form-field">
+                <label class="field-label">Телефон</label>
+                <input class="input" placeholder="+7 900 000-00-00" @bind="_phone" />
+            </div>
+
+            <div class="form-field">
+                <label class="field-label">ID в amoCRM</label>
+                <input class="input" type="number" placeholder="Например: 9999" @bind="_externalId" />
+            </div>
+        </div>
+
+        <div class="form-grid">
+            <div class="form-field">
+                <label class="field-label">Широта (Lat)</label>
+                <input class="input" placeholder="55.7558" @bind="_latText" />
+            </div>
+
+            <div class="form-field">
+                <label class="field-label">Долгота (Lng)</label>
+                <input class="input" placeholder="37.6173" @bind="_lngText" />
+            </div>
+        </div>
+
+        <div class="form-field">
+            <label class="field-label">Статус модерации</label>
+            <select class="input" @bind="_approvalStatus">
+                @foreach (var st in Enum.GetValues<PointApprovalStatus>())
+                {
+                    <option value="@st">@StatusDisplay.Label(st)</option>
+                }
+            </select>
+        </div>
+
+        <div class="actions">
+            <button class="btn primary" @onclick="SaveAsync" disabled="@_busy">
+                @(_editId is null ? "Создать точку" : "Сохранить изменения")
+            </button>
+            @if (_editId is not null && _approvalStatus != PointApprovalStatus.Active)
+            {
+                <button class="btn" @onclick="ApproveCurrentAsync" disabled="@_busy">
+                    Подтвердить точку
+                </button>
+            }
+            @if (_editId is not null)
+            {
+                <button class="btn" @onclick="StartNewAsync" disabled="@_busy">
+                    Сбросить
+                </button>
+            }
+        </div>
+
+        <p class="hint">
+            Поиск адреса и определение адреса по клику работают через Geocoder API 2ГИС.
+            Подтверждение точки автоматически снимает блокировку со всех её заказов.
+        </p>
+    </section>
+
+    <section class="card map-card">
+        <div class="map-head">
+            <h2>Карта 2ГИС</h2>
+            <div class="map-legend">
+                <span><i class="legend-dot active"></i>Активна</span>
+                <span><i class="legend-dot pending"></i>На модерации</span>
+                <span><i class="legend-dot draft"></i>Выбрано</span>
+            </div>
+        </div>
+        <div id="points-map-2gis" class="map-box"></div>
+        @if (_mapError is not null)
+        {
+            <p class="hint">@_mapError</p>
+        }
+    </section>
+</div>
+
+<section class="card table-card">
+    <h2>Справочник точек <span class="muted">(@_points.Count)</span></h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>Адрес</th>
+                <th>Телефон</th>
+                <th>ID amoCRM</th>
+                <th>Координаты</th>
+                <th>Статус</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (_points.Count == 0)
+            {
+                <tr><td colspan="7" class="muted">Точек пока нет.</td></tr>
+            }
+            @foreach (var pt in _points)
+            {
+                <tr class="@(_editId == pt.Id ? "row-selected" : string.Empty)">
+                    <td><strong>@pt.Name</strong></td>
+                    <td>@pt.Address</td>
+                    <td>@(pt.Phone ?? "—")</td>
+                    <td>@(pt.ExternalId?.ToString() ?? "—")</td>
+                    <td>
+                        @if (pt.Latitude is not null && pt.Longitude is not null)
+                        {
+                            <span>@pt.Latitude.Value.ToString("0.00000", CultureInfo.InvariantCulture), @pt.Longitude.Value.ToString("0.00000", CultureInfo.InvariantCulture)</span>
+                        }
+                        else
+                        {
+                            <span class="muted">не заданы</span>
+                        }
+                    </td>
+                    <td>
+                        <span class="badge @StatusDisplay.CssClass(pt.ApprovalStatus)">
+                            @StatusDisplay.Label(pt.ApprovalStatus)
+                        </span>
+                    </td>
+                    <td>
+                        <div class="actions" style="margin-top:0">
+                            <button class="btn small" @onclick="() => SelectPointAsync(pt)">На карте / Изменить</button>
+                            @if (pt.ApprovalStatus == PointApprovalStatus.PendingApproval)
+                            {
+                                <button class="btn small primary" @onclick="() => QuickApproveAsync(pt)" disabled="@_busy">
+                                    Подтвердить
+                                </button>
+                            }
+                        </div>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</section>
+
+@code {
+    private List<Point> _points = [];
+    private List<AddressSuggestion> _suggestions = [];
+    private DotNetObjectReference<Points>? _dotNetRef;
+    private CancellationTokenSource? _suggestCts;
+    private bool _loading = true;
+    private bool _busy;
+    private bool _geocodeBusy;
+    private bool _mapInitialized;
+    private bool _isError;
+    private string? _message;
+    private string? _addressHint;
+    private string? _mapError;
+    private string _mapKey = string.Empty;
+
+    private Guid? _editId;
+    private string _name = string.Empty;
+    private string _address = string.Empty;
+    private string? _phone;
+    private long? _externalId;
+    private string _latText = "55.7558";
+    private string _lngText = "37.6173";
+    private PointApprovalStatus _approvalStatus = PointApprovalStatus.Active;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _mapKey = Configuration["TwoGis:ApiKey"] ?? string.Empty;
+        await LoadPointsAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_mapKey))
+        {
+            _mapError = "Ключ 2ГИС не настроен: добавьте TwoGis:ApiKey в user secrets.";
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            var firstWithCoords = _points.FirstOrDefault(p => p.Latitude is not null && p.Longitude is not null);
+            var centerLat = firstWithCoords?.Latitude ?? 55.7558;
+            var centerLng = firstWithCoords?.Longitude ?? 37.6173;
+
+            await Js.InvokeVoidAsync(
+                "deliveryMap.init",
+                "points-map-2gis",
+                _dotNetRef,
+                MapDtos(),
+                centerLat,
+                centerLng,
+                _mapKey);
+            _mapInitialized = true;
+        }
+        catch (Exception ex)
+        {
+            _mapError = "Карта 2ГИС недоступна: " + ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnMapClicked(double lat, double lng)
+    {
+        _latText = FormatCoordinate(lat);
+        _lngText = FormatCoordinate(lng);
+        _suggestions.Clear();
+        _isError = false;
+        _message = null;
+        StateHasChanged();
+
+        await ReverseGeocodeAsync(lat, lng);
+    }
+
+    [JSInvokable]
+    public Task OnMapError(string message)
+    {
+        _mapError = "2ГИС: " + message;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnPointMarkerClicked(Guid pointId)
+    {
+        var pt = _points.FirstOrDefault(p => p.Id == pointId);
+        if (pt is not null)
+        {
+            PopulateForm(pt);
+            StateHasChanged();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadPointsAsync()
+    {
+        _loading = true;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var service = scope.ServiceProvider.GetRequiredService<PointService>();
+            _points = (await service.ListAsync(DevSeed.TenantId)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _isError = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        await LoadPointsAsync();
+        await SyncMapAsync();
+    }
+
+    private async Task StartNewAsync()
+    {
+        _editId = null;
+        _name = string.Empty;
+        _address = string.Empty;
+        _phone = null;
+        _externalId = null;
+        _latText = "55.7558";
+        _lngText = "37.6173";
+        _approvalStatus = PointApprovalStatus.Active;
+        _message = null;
+        _addressHint = null;
+        _suggestions.Clear();
+        await SyncMapAsync();
+    }
+
+    private async Task SelectPointAsync(Point pt)
+    {
+        PopulateForm(pt);
+        _message = null;
+        _addressHint = null;
+        _suggestions.Clear();
+
+        if (_mapInitialized && pt.Latitude is not null && pt.Longitude is not null)
+        {
+            try
+            {
+                await Js.InvokeVoidAsync("deliveryMap.focus", pt.Latitude.Value, pt.Longitude.Value, 15);
+            }
+            catch
+            {
+                // ignore JS error
+            }
+        }
+    }
+
+    private void PopulateForm(Point pt)
+    {
+        _editId = pt.Id;
+        _name = pt.Name;
+        _address = pt.Address;
+        _phone = pt.Phone;
+        _externalId = pt.ExternalId;
+        _latText = pt.Latitude is null ? string.Empty : FormatCoordinate(pt.Latitude.Value);
+        _lngText = pt.Longitude is null ? string.Empty : FormatCoordinate(pt.Longitude.Value);
+        _approvalStatus = pt.ApprovalStatus;
+    }
+
+    private void OnAddressInput(ChangeEventArgs e)
+    {
+        _address = e.Value?.ToString() ?? string.Empty;
+        _addressHint = null;
+        _suggestCts?.Cancel();
+        _suggestCts?.Dispose();
+        _suggestCts = null;
+        _suggestions.Clear();
+
+        var query = _address.Trim();
+        if (query.Length < 3)
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _suggestCts = cts;
+        _ = SuggestDebouncedAsync(query, cts.Token);
+    }
+
+    private async Task SuggestDebouncedAsync(string query, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(350, ct);
+
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var geocoder = scope.ServiceProvider.GetRequiredService<TwoGisGeocoder>();
+            var items = await geocoder.SuggestAsync(query, ct);
+
+            if (ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _suggestions = items.Take(8).ToList();
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            _addressHint = "Подсказки 2ГИС: " + ex.Message;
+            _suggestions.Clear();
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SelectSuggestionAsync(AddressSuggestion suggestion)
+    {
+        _address = suggestion.FullName;
+        _suggestions.Clear();
+        _suggestCts?.Cancel();
+        await FindAddressAsync();
+    }
+
+    private async Task FindAddressAsync()
+    {
+        _suggestCts?.Cancel();
+        _suggestions.Clear();
+
+        var query = _address.Trim();
+        if (query.Length == 0)
+        {
+            _isError = true;
+            _message = "Введите адрес или кликните по карте.";
+            return;
+        }
+
+        _geocodeBusy = true;
+        _isError = false;
+        _message = null;
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var geocoder = scope.ServiceProvider.GetRequiredService<TwoGisGeocoder>();
+            var place = (await geocoder.ForwardAsync(query)).FirstOrDefault();
+
+            if (place is null)
+            {
+                _isError = true;
+                _message = $"Адрес «{query}» не найден в 2ГИС.";
+                _addressHint = null;
+                return;
+            }
+
+            _address = place.FullName;
+            _latText = FormatCoordinate(place.Latitude);
+            _lngText = FormatCoordinate(place.Longitude);
+            _addressHint = "Координаты найдены по адресу через 2ГИС.";
+
+            if (_mapInitialized)
+            {
+                await Js.InvokeVoidAsync("deliveryMap.focus", place.Latitude, place.Longitude, 16);
+            }
+        }
+        catch (Exception ex)
+        {
+            _isError = true;
+            _message = "Геокодер 2ГИС: " + ex.Message;
+        }
+        finally
+        {
+            _geocodeBusy = false;
+        }
+    }
+
+    private async Task ReverseGeocodeAsync(double lat, double lng)
+    {
+        _addressHint = "Определяю адрес по координатам...";
+        StateHasChanged();
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var geocoder = scope.ServiceProvider.GetRequiredService<TwoGisGeocoder>();
+            var place = await geocoder.ReverseAsync(lat, lng);
+
+            if (place is null)
+            {
+                _addressHint = "Адрес не найден — заполните вручную.";
+            }
+            else
+            {
+                _address = place.FullName;
+                _addressHint = "Адрес определён по координатам через 2ГИС.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _addressHint = "Не удалось определить адрес: " + ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ApproveCurrentAsync()
+    {
+        _approvalStatus = PointApprovalStatus.Active;
+        await SaveAsync();
+    }
+
+    private async Task QuickApproveAsync(Point pt)
+    {
+        PopulateForm(pt);
+        _approvalStatus = PointApprovalStatus.Active;
+        await SaveAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        double? lat = null;
+        double? lng = null;
+
+        if (!string.IsNullOrWhiteSpace(_latText))
+        {
+            if (!double.TryParse(_latText.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedLat))
+            {
+                _isError = true;
+                _message = "Некорректный формат широты.";
+                return;
+            }
+            lat = parsedLat;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_lngText))
+        {
+            if (!double.TryParse(_lngText.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedLng))
+            {
+                _isError = true;
+                _message = "Некорректный формат долготы.";
+                return;
+            }
+            lng = parsedLng;
+        }
+
+        _busy = true;
+        _message = null;
+        _suggestions.Clear();
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var service = scope.ServiceProvider.GetRequiredService<PointService>();
+
+            var wasNew = _editId is null;
+            var result = await service.UpsertAsync(
+                DevSeed.TenantId,
+                new PointUpsertRequest(
+                    _editId,
+                    _name,
+                    _address,
+                    _phone,
+                    _externalId,
+                    lat,
+                    lng,
+                    _approvalStatus));
+
+            _editId = result.Point.Id;
+            _isError = false;
+            _message = (wasNew ? $"Точка «{result.Point.Name}» создана." : $"Точка «{result.Point.Name}» сохранена.")
+                + (result.UnblockedOrdersCount > 0 ? $" Разблокировано заказов: {result.UnblockedOrdersCount}." : string.Empty);
+
+            await LoadPointsAsync();
+            await SyncMapAsync(lat, lng);
+        }
+        catch (Exception ex)
+        {
+            _isError = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SyncMapAsync(double? draftLat = null, double? draftLng = null)
+    {
+        if (!_mapInitialized)
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("deliveryMap.updatePoints", MapDtos(), draftLat, draftLng);
+        }
+        catch
+        {
+            // ignore JS error
+        }
+    }
+
+    private object[] MapDtos() => _points
+        .Select(p => new
+        {
+            id = p.Id,
+            name = p.Name,
+            address = p.Address,
+            externalId = p.ExternalId,
+            latitude = p.Latitude,
+            longitude = p.Longitude,
+            approvalStatus = p.ApprovalStatus.ToString()
+        })
+        .ToArray<object>();
+
+    private static string FormatCoordinate(double value) =>
+        value.ToString("0.######", CultureInfo.InvariantCulture);
+
+    public async ValueTask DisposeAsync()
+    {
+        _suggestCts?.Cancel();
+        _suggestCts?.Dispose();
+
+        if (_mapInitialized)
+        {
+            try
+            {
+                await Js.InvokeVoidAsync("deliveryMap.dispose");
+            }
+            catch
+            {
+                // circuit may already be disconnected
+            }
+        }
+
+        _dotNetRef?.Dispose();
+    }
+}

@@ -1,0 +1,14 @@
+{
+  "eventType": "status_lead",
+  "amoLeadId": 9001,
+  "pipelineId": 1,
+  "stageId": 900,
+  "stageName": "Закрыто и не реализовано",
+  "responsibleAmoUserId": 501,
+  "requestedDate": "2026-10-27",
+  "pointExternalId": 7001,
+  "items": [
+    { "productName": "Котлеты", "quantity": 10, "unit": "kg", "weight": 10 },
+    { "productName": "Тефтели", "quantity": 5, "unit": "kg", "weight": 5 }
+  ]
+}

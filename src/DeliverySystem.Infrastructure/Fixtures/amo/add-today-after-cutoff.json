@@ -1,0 +1,13 @@
+{
+  "eventType": "update_lead",
+  "amoLeadId": 9007,
+  "pipelineId": 1,
+  "stageId": 100,
+  "stageName": "Готов к доставке",
+  "responsibleAmoUserId": 502,
+  "requestedDate": "2026-10-27",
+  "pointExternalId": 7001,
+  "items": [
+    { "productName": "Пельмени", "quantity": 20, "unit": "kg", "weight": 20 }
+  ]
+}

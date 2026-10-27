@@ -1,0 +1,20 @@
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)">
+            <NotAuthorized>
+                <LayoutView Layout="typeof(MainLayout)">
+                    <div class="empty">
+                        Недостаточно прав для этой страницы.
+                        <a href="/welcome">В личный кабинет</a>
+                    </div>
+                </LayoutView>
+            </NotAuthorized>
+        </AuthorizeRouteView>
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="typeof(MainLayout)">
+            <div class="empty">Страница не найдена. <a href="/orders">К заказам</a></div>
+        </LayoutView>
+    </NotFound>
+</Router>

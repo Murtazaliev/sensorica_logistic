@@ -1,0 +1,52 @@
+@inherits LayoutComponentBase
+
+<div class="shell">
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="brand-mark">DS</span>
+            <div>
+                <strong>DeliverySystem</strong>
+                <small>диспетчер</small>
+            </div>
+        </div>
+
+        <nav>
+            <AuthorizeView Roles="Dispatcher,Admin,Head">
+                <Authorized>
+                    <NavLink href="/orders" Match="NavLinkMatch.Prefix">Заказы</NavLink>
+                    <NavLink href="/routes">Маршруты</NavLink>
+                    <NavLink href="/points">Точки на карте</NavLink>
+                </Authorized>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Dispatcher,Admin">
+                <Authorized>
+                    <NavLink href="/sync">Лента синка</NavLink>
+                </Authorized>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Courier,PointManager,SalesManager">
+                <Authorized>
+                    <NavLink href="/welcome">Мой кабинет</NavLink>
+                </Authorized>
+            </AuthorizeView>
+        </nav>
+
+        <div class="sidebar-foot">
+            <AuthorizeView>
+                <Authorized>
+                    <span class="muted">@context.User.Identity?.Name</span>
+                    <span class="tag">@RoleDisplay.Label(context.User)</span>
+                    <a href="/auth/logout">Выйти</a>
+                </Authorized>
+            </AuthorizeView>
+            <a href="/swagger" target="_blank" rel="noreferrer">Swagger</a>
+            <a href="/health" target="_blank" rel="noreferrer">Health</a>
+            <span class="muted">dev-тенант · mock amoCRM</span>
+        </div>
+    </aside>
+
+    <main class="content">
+        @Body
+    </main>
+</div>

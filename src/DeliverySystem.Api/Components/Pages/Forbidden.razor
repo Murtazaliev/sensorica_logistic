@@ -1,0 +1,28 @@
+@page "/forbidden"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+
+<PageTitle>Нет доступа — DeliverySystem</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>Нет доступа</h1>
+        <p class="muted">403 · недостаточно прав для этой страницы</p>
+    </div>
+</div>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="card">
+            <p>
+                Вы вошли как <strong>@context.User.Identity?.Name</strong>
+                (@RoleDisplay.Label(context.User)).
+            </p>
+            <p>Эта страница доступна другой роли. Вернитесь в личный кабинет.</p>
+            <p>
+                <a class="btn primary" href="/welcome">В личный кабинет</a>
+                <a class="btn" href="/auth/logout">Выйти</a>
+            </p>
+        </div>
+    </Authorized>
+</AuthorizeView>

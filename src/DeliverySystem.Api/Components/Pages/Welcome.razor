@@ -1,0 +1,35 @@
+@page "/welcome"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@attribute [Authorize]
+
+<PageTitle>Личный кабинет — DeliverySystem</PageTitle>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="page-head">
+            <div>
+                <h1>@context.User.Identity?.Name</h1>
+                <p class="muted">
+                    Роль: <strong>@RoleDisplay.Label(context.User)</strong>
+                    · @context.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                </p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Кабинет роли</h2>
+            <p>
+                Интерфейс для вашей роли ещё в разработке. Сейчас доступны:
+            </p>
+            <ul>
+                <li><strong>Диспетчер, Администратор, Руководитель</strong> — заказы, точки на карте, модерация.</li>
+                <li><strong>Администратор и Диспетчер</strong> — лента синхронизации и симуляция amoCRM.</li>
+                <li><strong>Курьер, Менеджер точки, Менеджер продаж</strong> — следующие этапы: MAUI/PWA и мини-панель.</li>
+            </ul>
+            <p class="hint">
+                Выйти можно по ссылке в левом нижнем углу.
+            </p>
+        </div>
+    </Authorized>
+</AuthorizeView>

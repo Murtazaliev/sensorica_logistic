@@ -1,0 +1,13 @@
+{
+  "eventType": "update_lead",
+  "amoLeadId": 9005,
+  "pipelineId": 1,
+  "stageId": 100,
+  "stageName": "Готов к доставке",
+  "responsibleAmoUserId": 504,
+  "requestedDate": "2026-10-26",
+  "pointExternalId": 7001,
+  "items": [
+    { "productName": "Блинчики", "quantity": 12, "unit": "kg", "weight": 12 }
+  ]
+}

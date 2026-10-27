@@ -1,0 +1,247 @@
+@page "/sync"
+@attribute [Authorize(Roles = "Dispatcher,Admin")]
+@using System.Globalization
+@using DeliverySystem.Core.Domain
+@using DeliverySystem.Core.Intake
+@using DeliverySystem.Infrastructure.Intake
+@using DeliverySystem.Infrastructure.Persistence
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+@inject AmoFixtureRepository Fixtures
+@inject IWebHostEnvironment Env
+
+<PageTitle>Лента синка — DeliverySystem</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>Лента синка</h1>
+        <p class="muted">
+            Техническая страница: история изменений для синхронизации, журнал операций
+            и тестовые заказы из amoCRM
+        </p>
+    </div>
+    <button class="btn" @onclick="LoadAsync" disabled="@_loading">Обновить</button>
+</div>
+
+@if (_isDev)
+{
+    <section class="card">
+        <h2>Тестовые заказы из amoCRM</h2>
+        <p class="muted">
+            Стенд для разработки: проигрывает фикстуру amoCRM и создаёт заказ так же,
+            как настоящий вебхук. В продакшене скрыт.
+        </p>
+        <div class="filters">
+            <select class="input wide" @bind="_scenario" title="@ScenarioDisplay.Description(_scenario)">
+                @foreach (var scenario in _scenarios)
+                {
+                    <option value="@scenario">@ScenarioDisplay.Label(scenario)</option>
+                }
+            </select>
+            <input class="input wide" placeholder="Время, ISO 8601 (необязательно)" @bind="_now" />
+            <button class="btn primary" @onclick="SimulateAsync" disabled="@_busy">Проиграть</button>
+        </div>
+        <p class="hint">@ScenarioDisplay.Description(_scenario)</p>
+        @if (_simMessage is not null)
+        {
+            <div class="alert @(_simError ? "error" : "success")">@_simMessage</div>
+        }
+    </section>
+}
+
+@if (_loading)
+{
+    <p class="muted">Загрузка...</p>
+}
+else if (_error is not null)
+{
+    <div class="alert error">@_error</div>
+}
+else
+{
+    <div class="sync-meta">
+        <span>Изменений: <strong>@_changes.Count</strong></span>
+        <span>Курсор: <strong>@_cursor</strong></span>
+        <span>Операций: <strong>@_operations.Count</strong></span>
+    </div>
+
+    <div class="card table-card">
+        <table class="table">
+            <thead>
+                <tr><th>Курсор</th><th>Сущность</th><th>Тип</th><th>Когда</th><th>Payload</th></tr>
+            </thead>
+            <tbody>
+                @if (_changes.Count == 0)
+                {
+                    <tr><td colspan="5" class="muted">Изменений нет. Проиграйте сценарий выше.</td></tr>
+                }
+                @foreach (var change in _changes)
+                {
+                    <tr>
+                        <td>@change.Id</td>
+                        <td>@StatusDisplay.Label(change.EntityType)</td>
+                        <td>
+                            <span class="badge @(change.ChangeType == SyncChangeType.Tombstone ? "status-cancelled" : "status-accepted")">
+                                @StatusDisplay.Label(change.ChangeType)
+                            </span>
+                        </td>
+                        <td>@change.ChangedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")</td>
+                        <td>
+                            <details>
+                                <summary>JSON</summary>
+                                <pre class="payload">@change.PayloadJson</pre>
+                            </details>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card table-card">
+        <h2>Журнал операций</h2>
+        <table class="table">
+            <thead>
+                <tr><th>Когда</th><th>Устройство</th><th>Тип</th><th>Статус</th><th>Ошибка</th></tr>
+            </thead>
+            <tbody>
+                @if (_operations.Count == 0)
+                {
+                    <tr><td colspan="5" class="muted">Операций нет. Смените статус заказа или нажмите кнопку статуса в карточке.</td></tr>
+                }
+                @foreach (var operation in _operations)
+                {
+                    <tr>
+                        <td>@operation.AppliedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")</td>
+                        <td>@StatusDisplay.DeviceLabel(operation.DeviceId)</td>
+                        <td>@StatusDisplay.Label(operation.Type)</td>
+                        <td><span class="badge @OperationClass(operation.Status)">@StatusDisplay.Label(operation.Status)</span></td>
+                        <td class="muted">@StatusDisplay.OperationError(operation.Error)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<SyncChange> _changes = [];
+    private List<SyncOperation> _operations = [];
+    private List<string> _scenarios = [];
+    private bool _loading = true;
+    private bool _busy;
+    private bool _isDev;
+    private string? _error;
+    private string? _simMessage;
+    private bool _simError;
+    private string _scenario = string.Empty;
+    private string? _now;
+    private long _cursor;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isDev = Env.IsDevelopment();
+        _scenarios = Fixtures.ListScenarios()
+            .OrderBy(ScenarioDisplay.SortKey)
+            .ThenBy(s => s, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _scenario = _scenarios.FirstOrDefault() ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            _changes = await db.SyncChanges
+                .AsNoTracking()
+                .Where(c => c.TenantId == DevSeed.TenantId)
+                .OrderByDescending(c => c.Id)
+                .Take(100)
+                .ToListAsync();
+
+            var operations = await db.SyncOperations
+                .AsNoTracking()
+                .Where(o => o.TenantId == DevSeed.TenantId)
+                .ToListAsync();
+
+            _operations = operations
+                .OrderByDescending(o => o.AppliedAt)
+                .Take(50)
+                .ToList();
+
+            _cursor = _changes.Count == 0 ? 0 : _changes.Max(c => c.Id);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SimulateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_scenario))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (!string.IsNullOrWhiteSpace(_now))
+        {
+            if (!DateTimeOffset.TryParse(
+                    _now,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var parsed))
+            {
+                _simError = true;
+                _simMessage = "now должен быть датой ISO 8601, например 2026-10-27T06:30:00Z.";
+                return;
+            }
+
+            now = parsed;
+        }
+
+        _busy = true;
+        _simMessage = null;
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var intake = scope.ServiceProvider.GetRequiredService<MockAmoIntake>();
+            var result = await intake.RunScenarioAsync(_scenario, DevSeed.TenantId, now);
+
+            _simError = result.Status == IntakeStatus.ValidationError;
+            _simMessage = $"«{ScenarioDisplay.Label(_scenario)}»: {StatusDisplay.Label(result.Status)}"
+                + (result.OrderId is null ? string.Empty : $" (заказ {result.OrderId})");
+        }
+        catch (Exception ex)
+        {
+            _simError = true;
+            _simMessage = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await LoadAsync();
+    }
+
+    private static string OperationClass(SyncOperationStatus status) => status switch
+    {
+        SyncOperationStatus.Applied => "status-delivered",
+        SyncOperationStatus.Conflict => "status-problem",
+        _ => "status-cancelled"
+    };
+}
