@@ -22,6 +22,7 @@ public enum SyncEntityType
 {
     Order,
     Point,
+    Route,
     Delivery,
     TareMovement,
     Problem

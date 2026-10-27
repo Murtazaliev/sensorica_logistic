@@ -1,0 +1,323 @@
+@page "/my-routes"
+@attribute [Authorize(Roles = "Courier")]
+@using System.Security.Claims
+@using DeliverySystem.Core.Domain
+@using DeliverySystem.Core.Routes
+@using DeliverySystem.Infrastructure.Routes
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.Extensions.Configuration
+@using Microsoft.JSInterop
+@using Microsoft.AspNetCore.Components
+@implements IAsyncDisposable
+@inject IServiceScopeFactory ScopeFactory
+@inject IJSRuntime Js
+@inject IConfiguration Configuration
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Navigation
+@inject DepotOptions Depot
+
+<PageTitle>Мои маршруты — DeliverySystem</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>Мои маршруты</h1>
+        <p class="muted">
+            @_courierName · сегодня и завтра. Маршрут назначает диспетчер.
+        </p>
+    </div>
+    <div class="actions" style="margin-top:0">
+        <button class="btn @(_date == Today ? "primary" : "")" @onclick="() => SetDateAsync(Today)">
+            Сегодня
+        </button>
+        <button class="btn @(_date == Tomorrow ? "primary" : "")" @onclick="() => SetDateAsync(Tomorrow)">
+            Завтра
+        </button>
+        <button class="btn" @onclick="LoadAsync" disabled="@_loading">Обновить</button>
+    </div>
+</div>
+
+@if (_message is not null)
+{
+    <div class="alert @(_isError ? "error" : "success")">@_message</div>
+}
+
+@if (_loading)
+{
+    <p class="muted">Загрузка...</p>
+}
+else if (_courierId is null)
+{
+    <div class="empty">Для вашей учётки не найден профиль курьера. Обратитесь к администратору.</div>
+}
+else if (_route is null)
+{
+    <div class="empty">
+        На @_date.ToString("dd.MM.yyyy") маршрут не назначен.
+        Диспетчер увидит заказы и сможет назначить маршрут.
+    </div>
+}
+else
+{
+    <div class="stats">
+        <div class="stat"><span>@_route.TotalPoints</span><label>точек</label></div>
+        <div class="stat"><span>@_route.TotalWeight.ToString("0.###")</span><label>кг</label></div>
+        <div class="stat"><span>@_route.TotalDistance.ToString("0.0")</span><label>км по дорогам</label></div>
+        <div class="stat"><span>@_route.TotalDuration</span><label>минут в пути</label></div>
+    </div>
+
+    <div class="routes-layout">
+        <section class="card">
+            <div class="route-summary">
+                <strong>@_route.CourierName</strong>
+                <span class="muted">@_route.Date.ToString("dd.MM.yyyy")</span>
+                <span class="badge @RouteDisplay.CssClass(_route.Status)">@RouteDisplay.Label(_route.Status)</span>
+            </div>
+
+            @if (_route.Stops.Count == 0)
+            {
+                <div class="empty">В маршруте нет остановок.</div>
+            }
+            else
+            {
+                <ol class="route-stops">
+                    @foreach (var stop in _route.Stops.OrderBy(s => s.SequenceNumber))
+                    {
+                        <li class="route-stop">
+                            <span class="route-seq">@stop.SequenceNumber</span>
+                            <div class="route-stop-main">
+                                <strong>@stop.OrderNumber</strong>
+                                <small>@stop.PointName · @stop.Address</small>
+                                <small>
+                                    @if (stop.PlannedArrivalFrom is not null && stop.PlannedArrivalTo is not null)
+                                    {
+                                        <span>окно @stop.PlannedArrivalFrom.Value.ToString("HH\\:mm")–@stop.PlannedArrivalTo.Value.ToString("HH\\:mm") · </span>
+                                    }
+                                    @stop.Weight.ToString("0.###") кг
+                                </small>
+                            </div>
+                            <span class="badge @OrderStatusClass(stop.OrderStatus)">@StatusDisplay.Label(stop.OrderStatus)</span>
+                        </li>
+                    }
+                </ol>
+            }
+
+            <p class="hint">
+                Контактный телефон и кнопка навигации появятся в мобильном приложении курьера.
+            </p>
+        </section>
+
+        <section class="card map-card">
+            <div class="map-head">
+                <h2>Карта маршрута</h2>
+                <div class="map-legend">
+                    <span><i class="legend-dot active"></i>@Depot.Name</span>
+                    <span><i class="legend-dot draft"></i>Остановка</span>
+                </div>
+            </div>
+            <p class="hint">Цех: @(Depot.Address ?? "адрес не задан")</p>
+            <div id="courier-route-map" class="map-box route-map-box"></div>
+            @if (_mapError is not null)
+            {
+                <p class="hint">@_mapError</p>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
+    private static readonly DateOnly Tomorrow = Today.AddDays(1);
+
+    private DateOnly _date = Today;
+    private Guid? _courierId;
+    private string _courierName = "Курьер";
+    private RouteDetailsDto? _route;
+    private bool _loading = true;
+    private bool _mapInitialized;
+    private bool _isError;
+    private string? _message;
+    private string? _mapError;
+    private string _mapKey = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _mapKey = Configuration["TwoGis:ApiKey"] ?? string.Empty;
+        ApplyDateFromQuery();
+
+        var state = await AuthState.GetAuthenticationStateAsync();
+        _courierName = state.User.Identity?.Name ?? "Курьер";
+        var userIdValue = state.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (Guid.TryParse(userIdValue, out var userId))
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var routes = scope.ServiceProvider.GetRequiredService<RouteService>();
+            _courierId = await routes.GetCourierIdForUserAsync(DevSeed.TenantId, userId);
+        }
+
+        await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_mapKey))
+        {
+            _mapError = "Ключ 2ГИС не настроен: добавьте TwoGis:ApiKey в user secrets.";
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync(
+                "routeMap.init",
+                "courier-route-map",
+                _mapKey,
+                MapStops(),
+                MapDepot(),
+                MapGeometry(),
+                null);
+            _mapInitialized = true;
+        }
+        catch (Exception ex)
+        {
+            _mapError = "Карта 2ГИС недоступна: " + ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private void ApplyDateFromQuery()
+    {
+        var query = Navigation.ToAbsoluteUri(Navigation.Uri).Query.TrimStart('?');
+
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            if (parts.Length == 2
+                && parts[0].Equals("date", StringComparison.OrdinalIgnoreCase)
+                && DateOnly.TryParse(Uri.UnescapeDataString(parts[1]), out var date))
+            {
+                _date = date;
+            }
+        }
+    }
+
+    private async Task SetDateAsync(DateOnly date)
+    {
+        _date = date;
+        _message = null;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_courierId is null)
+        {
+            _loading = false;
+            return;
+        }
+
+        _loading = true;
+
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var routes = scope.ServiceProvider.GetRequiredService<RouteService>();
+            var route = await routes.GetForCourierAsync(DevSeed.TenantId, _courierId.Value, _date);
+
+            _route = route is null
+                     || route.Status is RouteStatus.Draft or RouteStatus.Cancelled
+                ? null
+                : route;
+
+            _isError = false;
+            _message = _route is null
+                ? $"На {_date:dd.MM.yyyy} маршрут не назначен."
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _isError = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        await SyncMapAsync();
+    }
+
+    private async Task SyncMapAsync()
+    {
+        if (!_mapInitialized)
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync(
+                "routeMap.update",
+                MapStops(),
+                MapDepot(),
+                MapGeometry());
+        }
+        catch
+        {
+            // ignore JS error
+        }
+    }
+
+    private object[] MapStops() => _route?.Stops
+        .Where(s => s.Latitude is not null && s.Longitude is not null)
+        .OrderBy(s => s.SequenceNumber)
+        .Select(s => new
+        {
+            sequenceNumber = s.SequenceNumber,
+            orderNumber = s.OrderNumber,
+            latitude = s.Latitude,
+            longitude = s.Longitude
+        })
+        .ToArray<object>() ?? [];
+
+    private object? MapDepot() => Depot.Latitude is not null && Depot.Longitude is not null
+        ? new
+        {
+            name = Depot.Name,
+            latitude = Depot.Latitude,
+            longitude = Depot.Longitude
+        }
+        : null;
+
+    private object[] MapGeometry() => _route?.RoadGeometry
+        .Select(point => new
+        {
+            latitude = point.Latitude,
+            longitude = point.Longitude
+        })
+        .ToArray<object>() ?? [];
+
+    private static string OrderStatusClass(OrderStatus status) =>
+        StatusDisplay.CssClass(status);
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_mapInitialized)
+        {
+            try
+            {
+                await Js.InvokeVoidAsync("routeMap.dispose");
+            }
+            catch
+            {
+                // circuit may already be disconnected
+            }
+        }
+    }
+}

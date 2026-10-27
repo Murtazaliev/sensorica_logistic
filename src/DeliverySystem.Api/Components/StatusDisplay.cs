@@ -49,6 +49,7 @@ public static class StatusDisplay
     {
         SyncEntityType.Order => "Заказ",
         SyncEntityType.Point => "Точка",
+        SyncEntityType.Route => "Маршрут",
         SyncEntityType.Delivery => "Доставка",
         SyncEntityType.TareMovement => "Тара",
         SyncEntityType.Problem => "Проблема",

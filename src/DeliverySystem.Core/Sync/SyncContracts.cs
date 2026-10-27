@@ -57,6 +57,31 @@ public sealed record PointSyncSnapshot(
     PointApprovalStatus ApprovalStatus,
     bool IsActive);
 
+public sealed record RouteStopSyncSnapshot(
+    Guid OrderId,
+    string OrderNumber,
+    int SequenceNumber,
+    string PointName,
+    string Address,
+    double? Latitude,
+    double? Longitude,
+    TimeOnly? PlannedArrivalFrom,
+    TimeOnly? PlannedArrivalTo,
+    OrderStatus OrderStatus);
+
+public sealed record RouteSyncSnapshot(
+    Guid Id,
+    Guid CourierId,
+    DateOnly Date,
+    RouteStatus Status,
+    int TotalPoints,
+    decimal TotalWeight,
+    decimal TotalDistance,
+    int TotalDuration,
+    IReadOnlyList<double[]>? Geometry,
+    IReadOnlyList<RouteStopSyncSnapshot> Stops,
+    DateTimeOffset UpdatedAt);
+
 public interface ISyncService
 {
     Task<SyncPushResult> PushAsync(Guid tenantId, SyncPushRequest request, CancellationToken ct = default);
@@ -122,4 +147,60 @@ public static class SyncChangeFactory
             point.IsActive)),
         ChangedAt = changedAt
     };
+
+    public static SyncChange ForRoute(
+        Route route,
+        IReadOnlyList<Order> orders,
+        DateTimeOffset changedAt)
+    {
+        var stops = orders.Select((order, index) =>
+        {
+            var from = route.PlannedStartTime.AddMinutes(30 * index);
+            return new RouteStopSyncSnapshot(
+                order.Id,
+                order.OrderNumber,
+                index + 1,
+                order.Point?.Name ?? "—",
+                order.Point?.Address ?? "—",
+                order.Point?.Latitude,
+                order.Point?.Longitude,
+                from,
+                from.AddMinutes(30),
+                order.Status);
+        }).ToList();
+
+        IReadOnlyList<double[]>? geometry = null;
+        if (!string.IsNullOrWhiteSpace(route.Geometry))
+        {
+            try
+            {
+                geometry = JsonSerializer.Deserialize<List<double[]>>(route.Geometry);
+            }
+            catch (JsonException)
+            {
+                // Keep route snapshot without geometry.
+            }
+        }
+
+        return new SyncChange
+        {
+            TenantId = route.TenantId,
+            EntityType = SyncEntityType.Route,
+            EntityId = route.Id,
+            ChangeType = SyncChangeType.Upsert,
+            PayloadJson = SyncJson.Serialize(new RouteSyncSnapshot(
+                route.Id,
+                route.CourierId,
+                route.Date,
+                route.Status,
+                route.TotalPoints,
+                route.TotalWeight,
+                route.TotalDistance,
+                route.TotalDuration,
+                geometry,
+                stops,
+                route.UpdatedAt)),
+            ChangedAt = changedAt
+        };
+    }
 }

@@ -33,6 +33,8 @@ public sealed record RouteStopDto(
     double? Latitude,
     double? Longitude,
     decimal Weight,
+    TimeOnly? PlannedArrivalFrom,
+    TimeOnly? PlannedArrivalTo,
     OrderStatus OrderStatus);
 
 public sealed record RouteDetailsDto(

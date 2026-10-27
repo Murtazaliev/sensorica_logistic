@@ -591,9 +591,12 @@ static double? ParseConfigDouble(string? value) =>
         : null;
 
 static string HomeForRole(string? role) =>
-    role is nameof(UserRole.Admin) or nameof(UserRole.Dispatcher) or nameof(UserRole.Head)
-        ? "/orders"
-        : "/welcome";
+    role switch
+    {
+        nameof(UserRole.Admin) or nameof(UserRole.Dispatcher) or nameof(UserRole.Head) => "/orders",
+        nameof(UserRole.Courier) => "/my-routes",
+        _ => "/welcome"
+    };
 
 static string BuildLoginHtml(
     string token,

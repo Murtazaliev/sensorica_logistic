@@ -1,6 +1,8 @@
 using DeliverySystem.Core.Domain;
 using DeliverySystem.Core.Routes;
+using DeliverySystem.Core.Sync;
 using DeliverySystem.Infrastructure.Routes;
+using Microsoft.EntityFrameworkCore;
 
 namespace DeliverySystem.Tests;
 
@@ -125,6 +127,48 @@ public sealed class RouteScenariosTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             routes.SetStopsAsync(TestDatabase.TenantId, draft.Id, []));
+    }
+
+    [Fact]
+    public async Task GetCourierIdForUser_ReturnsCourierProfile()
+    {
+        await using var testDb = await TestDatabase.CreateAsync();
+        var clock = new MutableTimeProvider(Morning);
+
+        await using var db = testDb.NewContext();
+        var routes = new RouteService(db, clock);
+
+        var courierId = await routes.GetCourierIdForUserAsync(
+            TestDatabase.TenantId,
+            TestDatabase.CourierUserId);
+
+        Assert.Equal(TestDatabase.CourierId, courierId);
+    }
+
+    [Fact]
+    public async Task SetStopsAndConfirm_AppendRouteChanges()
+    {
+        await using var testDb = await TestDatabase.CreateAsync();
+        var clock = new MutableTimeProvider(Morning);
+        var (first, _, _) = await SeedOrdersAsync(testDb, Date);
+
+        await using var db = testDb.NewContext();
+        var routes = new RouteService(db, clock);
+        var draft = await routes.EnsureDraftAsync(TestDatabase.TenantId, TestDatabase.CourierId, Date);
+        await routes.SetStopsAsync(TestDatabase.TenantId, draft.Id, [first]);
+        await routes.ConfirmAsync(TestDatabase.TenantId, draft.Id);
+
+        var changes = await db.SyncChanges
+            .AsNoTracking()
+            .Where(c => c.EntityType == SyncEntityType.Route)
+            .OrderBy(c => c.Id)
+            .ToListAsync();
+
+        Assert.Equal(2, changes.Count);
+        var snapshot = SyncJson.Deserialize<RouteSyncSnapshot>(changes[^1].PayloadJson);
+        Assert.NotNull(snapshot);
+        Assert.Equal(RouteStatus.Confirmed, snapshot!.Status);
+        Assert.Single(snapshot.Stops);
     }
 
     [Fact]

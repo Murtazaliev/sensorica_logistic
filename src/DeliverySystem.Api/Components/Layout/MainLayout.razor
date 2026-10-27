@@ -25,7 +25,13 @@
                 </Authorized>
             </AuthorizeView>
 
-            <AuthorizeView Roles="Courier,PointManager,SalesManager">
+            <AuthorizeView Roles="Courier">
+                <Authorized>
+                    <NavLink href="/my-routes">Мои маршруты</NavLink>
+                </Authorized>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="PointManager,SalesManager">
                 <Authorized>
                     <NavLink href="/welcome">Мой кабинет</NavLink>
                 </Authorized>

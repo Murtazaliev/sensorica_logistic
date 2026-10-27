@@ -36,7 +36,8 @@ delivery-system-kb/
 │   ├── ADR-0010-authentication-rbac.md
 │   ├── ADR-0011-route-planner-mvp.md
 │   ├── ADR-0012-road-routing.md
-│   └── ADR-0013-road-auto-order.md
+│   ├── ADR-0013-road-auto-order.md
+│   └── ADR-0014-route-sync-courier-view.md
 ├── 30-plan/
 │   ├── roadmap.md                 # этапы, сроки, риски, MVP-скоуп
 │   ├── current-state.md           # где мы сейчас и что дальше (обновлять!)
@@ -73,6 +74,6 @@ delivery-system-kb/
 
 - Фаза: **разработка начата**; UI диспетчера, 2ГИС, auth/RBAC и MVP маршрутов готовы.
 - Спека: **v2.0** (после ревью на пробелы).
-- Код: `src/` на .NET 10, **30/30 тестов зелёные**, Swagger UI, экраны `/orders`, `/routes`, `/points`, `/sync`, вход `/login`.
+- Код: `src/` на .NET 10, **32/32 теста зелёные**, Swagger UI, экраны `/orders`, `/routes`, `/my-routes`, `/points`, `/sync`, вход `/login`.
 - Следующая цель: TSP/VRP и ETA по остановкам, затем OTP и управление пользователями.
 - Подробнее: `30-plan/current-state.md`.

@@ -15,6 +15,7 @@
 | ADR-0011 | 2026-10-27 | MVP маршрутов: `Courier`/`Route`/`RoutePoint`, ручной и авто-порядок, блокировка после 10:00 | Accepted |
 | ADR-0012 | 2026-10-27 | Дорожная геометрия маршрутов через Directions API 2ГИС, fallback на прямую | Accepted |
 | ADR-0013 | 2026-10-27 | Авто-порядок остановок по Distance Matrix API + локальный Or-opt | Accepted |
+| ADR-0014 | 2026-10-27 | Route-snapshot в change feed и веб-экран курьера `/my-routes` | Accepted |
 
 ## Как добавить решение
 

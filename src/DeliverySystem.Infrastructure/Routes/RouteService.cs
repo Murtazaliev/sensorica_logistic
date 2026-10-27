@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DeliverySystem.Core.Domain;
 using DeliverySystem.Core.Routes;
+using DeliverySystem.Core.Sync;
 using DeliverySystem.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -124,6 +125,18 @@ public sealed class RouteService
         }
 
         return await BuildDetailsAsync(route, tenantId, ct);
+    }
+
+    public async Task<Guid?> GetCourierIdForUserAsync(
+        Guid tenantId,
+        Guid userId,
+        CancellationToken ct = default)
+    {
+        return await db.Couriers
+            .AsNoTracking()
+            .Where(c => c.TenantId == tenantId && c.UserId == userId)
+            .Select(c => (Guid?)c.Id)
+            .FirstOrDefaultAsync(ct);
     }
 
     public async Task<bool> IsPlanningLockedAsync(
@@ -335,6 +348,8 @@ public sealed class RouteService
         route.Geometry = roadRoute is not null
             ? SerializeGeometry(roadRoute.Geometry)
             : SerializeGeometry(routeCoordinates);
+
+        db.SyncChanges.Add(SyncChangeFactory.ForRoute(route, orderedOrders, now));
 
         await db.SaveChangesAsync(ct);
 
@@ -572,6 +587,21 @@ public sealed class RouteService
         route.LockedAt = now;
         route.ConfirmedAt = now;
         route.UpdatedAt = now;
+
+        var routePoints = await db.RoutePoints
+            .AsNoTracking()
+            .Where(p => p.RouteId == route.Id && p.IsActive)
+            .Include(p => p.Order)
+            .ThenInclude(o => o!.Point)
+            .OrderBy(p => p.SequenceNumber)
+            .ToListAsync(ct);
+
+        var orders = routePoints
+            .Where(p => p.Order is not null)
+            .Select(p => p.Order!)
+            .ToList();
+
+        db.SyncChanges.Add(SyncChangeFactory.ForRoute(route, orders, now));
         await db.SaveChangesAsync(ct);
 
         return (await GetAsync(tenantId, routeId, ct))!;
@@ -660,6 +690,8 @@ public sealed class RouteService
                 p.Order.Point?.Latitude,
                 p.Order.Point?.Longitude,
                 p.Order.TotalWeight,
+                p.PlannedArrivalFrom,
+                p.PlannedArrivalTo,
                 p.Order.Status))
             .ToList();
 

@@ -3,7 +3,7 @@
 - Обновлено: **2026-10-27**
 - Фаза: **разработка начата**; UI диспетчера, 2ГИС, auth/RBAC и **MVP маршрутов** готовы
 - Ближайшая цель: **TSP/VRP и ETA по остановкам**, затем OTP и управление пользователями
-- Код: `src/DeliverySystem.slnx` (.NET 10), **30/30 тестов зелёные**
+- Код: `src/DeliverySystem.slnx` (.NET 10), **32/32 теста зелёные**
 
 ## Сделано
 
@@ -28,11 +28,12 @@
 - [x] **MVP маршрутов курьеров** (ADR-0011): `Courier`/`Route`/`RoutePoint`, 3 курьера (`courier@`, `courier2@`, `courier3@demo.local`), черновик на курьера/дату, ручной и авто-порядок по прямой, подтверждение и блокировка после 10:00.
 - [x] **Дорожная геометрия маршрутов** (ADR-0012): Directions API 2ГИС, дистанция/время, цех как старт, fallback на прямую; MapGL рисует дорожную линию.
 - [x] **Авто-порядок по дорогам** (ADR-0013): Distance Matrix API + Or-opt, fallback на прямую; в смоуке дистанция 11,15 → 6,85 км.
+- [x] **Маршрут в синке и экран курьера** (ADR-0014): `SyncEntityType.Route`, route-snapshot с остановками/геометрией, запись при сохранении и подтверждении; `/my-routes` для Courier с картой и остановками.
 - [x] Страница `/routes` (Staff): список маршрутов на дату, свободные заказы, остановки, карта MapGL с цехом/номерами/линией, демо-заказы в Development; API `/api/couriers`, `/api/routes`, `/dev/orders/demo`.
 - [x] Цех в конфиге `Depot` (`Name`, `Address`, `Latitude`, `Longitude` в `appsettings.json`); маркер и старт линии на карте.
 - [x] Защита UI: `/orders`, `/routes`, `/points` — Staff; `/sync` — Admin/Dispatcher; `/welcome` — все авторизованные; скрытие разделов в меню.
 - [x] Защита API: Staff/Admin/любой авторизованный по разделам; `401/403` для `/api/*`; `/dev/amo/*` и `/dev/orders/*` только Staff.
-- [x] **30/30 тестов зелёные** (маршруты, дорожный роутер, дорожная матрица); auth и маршруты проверены HTTP-смоуком.
+- [x] **32/32 теста зелёные** (маршруты, роутер, матрица, route-sync, профиль курьера); auth и маршруты проверены HTTP-смоуком.
 - [x] EF Core 10 + SQLite, `EnsureCreated` + автодобавление таблиц/колонок в существующую dev-БД.
 - [x] API и UI проверены смоуком; ключ 2ГИС и тайлы отвечают 200.
 
@@ -42,7 +43,7 @@
 - [ ] Tenant-resolving не реализован: используется dev-тенант, хотя `tenant_id` уже в claims.
 - [ ] UI не покрыт e2e; нет пагинации заказов и журнала операций (маленькие выборки dev-этапа).
 - [ ] Маршруты: нет TSP/VRP для нескольких курьеров и временных окон; ETA по остановкам, лимиты вместимости/точек.
-- [ ] Маршрут не уходит курьеру в change feed; нет экрана маршрута в MAUI/PWA.
+- [ ] Экран курьера веб-only и read-only: нет MAUI/PWA, офлайн-кеша, приёма/отклонения маршрута и навигации.
 - [ ] Старые подтверждённые маршруты сохраняют прямую геометрию; новые/изменённые строятся по дорогам.
 - [ ] Подтверждение маршрута не меняет статусы заказов; трекинг/переназначение — впереди.
 - [ ] TSP/VRP и async Distance Matrix не подключены; геокодинг/маршрутизация/матрица без кеша и лимитов; демо-маршрут ограничен 50 км.
@@ -63,7 +64,7 @@
 3. EF concurrency token вместо ручного `Version++`; миграции и PostgreSQL.
 4. Ретенция change feed, device presence, полный набор sync-операций (доставка/фото/тара).
 5. Реальные payload'ы amoCRM и общий contract-набор для мок/реального адаптера.
-6. Клиент курьера с офлайном (MAUI/PWA) — после стабилизации протокола синка.
+6. Клиент курьера с офлайном (MAUI/PWA): pull route-snapshot, локальный кеш, приём маршрута, навигация.
 7. TSP/VRP для нескольких курьеров и окон, async-матрица/кеш, ограничение ключа по домену.
 
 ## Блокеры / зависимости
@@ -90,7 +91,7 @@
 |---|---|
 | Сущности и enum'ы | `src/DeliverySystem.Core/Domain/` |
 | Контракты приёма | `src/DeliverySystem.Core/Intake/` |
-| Контракты синка | `src/DeliverySystem.Core/Sync/SyncContracts.cs` |
+| Контракты синка | `src/DeliverySystem.Core/Sync/SyncContracts.cs` (включая route-snapshot) |
 | `OrderIntakeService` | `src/DeliverySystem.Infrastructure/Intake/OrderIntakeService.cs` |
 | `MockAmoIntake` | `src/DeliverySystem.Infrastructure/Intake/MockAmoIntake.cs` |
 | `SyncService` | `src/DeliverySystem.Infrastructure/Sync/SyncService.cs` |
@@ -106,7 +107,7 @@
 | Фикстуры | `src/DeliverySystem.Infrastructure/Fixtures/amo/` |
 | DbContext | `src/DeliverySystem.Infrastructure/Persistence/AppDbContext.cs` |
 | API + Swagger | `src/DeliverySystem.Api/Program.cs` |
-| UI (Blazor) | `src/DeliverySystem.Api/Components/` (`Pages/Orders`, `Pages/OrderDetail`, `Pages/RoutePlanner`, `Pages/Points`, `Pages/SyncFeed`, `Pages/Welcome`, `Pages/Forbidden`) |
+| UI (Blazor) | `src/DeliverySystem.Api/Components/` (`Pages/Orders`, `Pages/OrderDetail`, `Pages/RoutePlanner`, `Pages/CourierRoutes`, `Pages/Points`, `Pages/SyncFeed`, `Pages/Welcome`, `Pages/Forbidden`) |
 | Карта 2ГИС и стили | `src/DeliverySystem.Api/wwwroot/map.js`, `route-map.js`, `wwwroot/icons/`, `wwwroot/app.css` |
 | Конфиг цеха | `src/DeliverySystem.Api/appsettings.json` (`Depot`) |
 | Тесты | `src/DeliverySystem.Tests/` (`IntakeScenariosTests`, `SyncScenariosTests`, `PointScenariosTests`, `RouteScenariosTests`, `TwoGisGeocoderTests`, `TestDatabase`) |
