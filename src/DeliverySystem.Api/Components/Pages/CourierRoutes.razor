@@ -45,66 +45,80 @@
 {
     <p class="muted">Загрузка...</p>
 }
-else if (_courierId is null)
-{
-    <div class="empty">Для вашей учётки не найден профиль курьера. Обратитесь к администратору.</div>
-}
-else if (_route is null)
-{
-    <div class="empty">
-        На @_date.ToString("dd.MM.yyyy") маршрут не назначен.
-        Диспетчер увидит заказы и сможет назначить маршрут.
-    </div>
-}
 else
 {
-    <div class="stats">
-        <div class="stat"><span>@_route.TotalPoints</span><label>точек</label></div>
-        <div class="stat"><span>@_route.TotalWeight.ToString("0.###")</span><label>кг</label></div>
-        <div class="stat"><span>@_route.TotalDistance.ToString("0.0")</span><label>км по дорогам</label></div>
-        <div class="stat"><span>@_route.TotalDuration</span><label>минут в пути</label></div>
-    </div>
+    @if (_courierId is null)
+    {
+        <div class="empty">Для вашей учётки не найден профиль курьера. Обратитесь к администратору.</div>
+    }
+    else if (_route is null)
+    {
+        <div class="empty">
+            На @_date.ToString("dd.MM.yyyy") маршрут не назначен.
+            Диспетчер увидит заказы и сможет назначить маршрут.
+        </div>
+    }
+    else
+    {
+        <div class="stats">
+            <div class="stat"><span>@_route.TotalPoints</span><label>точек</label></div>
+            <div class="stat"><span>@_route.TotalWeight.ToString("0.###")</span><label>кг</label></div>
+            <div class="stat"><span>@_route.TotalDistance.ToString("0.0")</span><label>км по дорогам</label></div>
+            <div class="stat"><span>@_route.TotalDuration</span><label>минут в пути</label></div>
+        </div>
+    }
 
     <div class="routes-layout">
-        <section class="card">
-            <div class="route-summary">
-                <strong>@_route.CourierName</strong>
-                <span class="muted">@_route.Date.ToString("dd.MM.yyyy")</span>
-                <span class="badge @RouteDisplay.CssClass(_route.Status)">@RouteDisplay.Label(_route.Status)</span>
-            </div>
+        @if (_route is null)
+        {
+            <section class="card">
+                <div class="empty">
+                    Маршрут не назначен. Диспетчер собирает его на странице «Маршруты».
+                </div>
+            </section>
+        }
+        else
+        {
+            <section class="card">
+                <div class="route-summary">
+                    <strong>@_route.CourierName</strong>
+                    <span class="muted">@_route.Date.ToString("dd.MM.yyyy")</span>
+                    <span class="badge @RouteDisplay.CssClass(_route.Status)">@RouteDisplay.Label(_route.Status)</span>
+                </div>
 
-            @if (_route.Stops.Count == 0)
-            {
-                <div class="empty">В маршруте нет остановок.</div>
-            }
-            else
-            {
-                <ol class="route-stops">
-                    @foreach (var stop in _route.Stops.OrderBy(s => s.SequenceNumber))
-                    {
-                        <li class="route-stop">
-                            <span class="route-seq">@stop.SequenceNumber</span>
-                            <div class="route-stop-main">
-                                <strong>@stop.OrderNumber</strong>
-                                <small>@stop.PointName · @stop.Address</small>
-                                <small>
-                                    @if (stop.PlannedArrivalFrom is not null && stop.PlannedArrivalTo is not null)
-                                    {
-                                        <span>окно @stop.PlannedArrivalFrom.Value.ToString("HH\\:mm")–@stop.PlannedArrivalTo.Value.ToString("HH\\:mm") · </span>
-                                    }
-                                    @stop.Weight.ToString("0.###") кг
-                                </small>
-                            </div>
-                            <span class="badge @OrderStatusClass(stop.OrderStatus)">@StatusDisplay.Label(stop.OrderStatus)</span>
-                        </li>
-                    }
-                </ol>
-            }
+                @if (_route.Stops.Count == 0)
+                {
+                    <div class="empty">В маршруте нет остановок.</div>
+                }
+                else
+                {
+                    <ol class="route-stops">
+                        @foreach (var stop in _route.Stops.OrderBy(s => s.SequenceNumber))
+                        {
+                            <li class="route-stop">
+                                <span class="route-seq">@stop.SequenceNumber</span>
+                                <div class="route-stop-main">
+                                    <strong>@stop.OrderNumber</strong>
+                                    <small>@stop.PointName · @stop.Address</small>
+                                    <small>
+                                        @if (stop.PlannedArrivalFrom is not null && stop.PlannedArrivalTo is not null)
+                                        {
+                                            <span>окно @stop.PlannedArrivalFrom.Value.ToString("HH\\:mm")–@stop.PlannedArrivalTo.Value.ToString("HH\\:mm") · </span>
+                                        }
+                                        @stop.Weight.ToString("0.###") кг
+                                    </small>
+                                </div>
+                                <span class="badge @OrderStatusClass(stop.OrderStatus)">@StatusDisplay.Label(stop.OrderStatus)</span>
+                            </li>
+                        }
+                    </ol>
+                }
 
-            <p class="hint">
-                Контактный телефон и кнопка навигации появятся в мобильном приложении курьера.
-            </p>
-        </section>
+                <p class="hint">
+                    Контактный телефон и кнопка навигации появятся в мобильном приложении курьера.
+                </p>
+            </section>
+        }
 
         <section class="card map-card">
             <div class="map-head">
