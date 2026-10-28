@@ -35,6 +35,7 @@ public sealed record RouteStopDto(
     decimal Weight,
     TimeOnly? PlannedArrivalFrom,
     TimeOnly? PlannedArrivalTo,
+    RoutePointStatus Status,
     OrderStatus OrderStatus);
 
 public sealed record RouteDetailsDto(
@@ -45,6 +46,7 @@ public sealed record RouteDetailsDto(
     RouteStatus Status,
     bool IsLocked,
     bool IsPlanningLocked,
+    DateTimeOffset? AcceptedAt,
     int TotalPoints,
     decimal TotalWeight,
     decimal TotalDistance,

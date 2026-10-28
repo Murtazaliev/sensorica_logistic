@@ -607,6 +607,184 @@ public sealed class RouteService
         return (await GetAsync(tenantId, routeId, ct))!;
     }
 
+    public async Task<RouteDetailsDto> AcceptAsync(
+        Guid tenantId,
+        Guid courierId,
+        Guid routeId,
+        CancellationToken ct = default)
+    {
+        var route = await LoadCourierRouteAsync(tenantId, courierId, routeId, ct);
+
+        if (route.Status != RouteStatus.Confirmed)
+        {
+            throw new InvalidOperationException("Принять можно только подтверждённый маршрут.");
+        }
+
+        if (route.AcceptedAt is null)
+        {
+            var now = clock.GetUtcNow();
+            route.AcceptedAt = now;
+            route.UpdatedAt = now;
+            var (_, orders) = await LoadActiveRouteOrdersAsync(route.Id, ct);
+            db.SyncChanges.Add(SyncChangeFactory.ForRoute(route, orders, now));
+            await db.SaveChangesAsync(ct);
+        }
+
+        return (await GetAsync(tenantId, routeId, ct))!;
+    }
+
+    public async Task<RouteDetailsDto> StartAsync(
+        Guid tenantId,
+        Guid courierId,
+        Guid routeId,
+        CancellationToken ct = default)
+    {
+        var route = await LoadCourierRouteAsync(tenantId, courierId, routeId, ct);
+
+        if (route.Status != RouteStatus.Confirmed)
+        {
+            throw new InvalidOperationException("Начать можно только подтверждённый маршрут.");
+        }
+
+        var now = clock.GetUtcNow();
+        route.Status = RouteStatus.InProgress;
+        route.AcceptedAt ??= now;
+        route.UpdatedAt = now;
+
+        var (points, orders) = await LoadActiveRouteOrdersAsync(route.Id, ct);
+        foreach (var order in orders)
+        {
+            ApplyOrderTransition(order, OrderStatus.InTransit, "Маршрут начат", now);
+        }
+
+        db.SyncChanges.Add(SyncChangeFactory.ForRoute(route, orders, now));
+        await db.SaveChangesAsync(ct);
+
+        return (await GetAsync(tenantId, routeId, ct))!;
+    }
+
+    public async Task<RouteDetailsDto> ArriveAsync(
+        Guid tenantId,
+        Guid courierId,
+        Guid routeId,
+        Guid routePointId,
+        CancellationToken ct = default)
+    {
+        var route = await LoadCourierRouteAsync(tenantId, courierId, routeId, ct);
+        EnsureRouteInProgress(route);
+
+        var (points, orders) = await LoadActiveRouteOrdersAsync(route.Id, ct);
+        var point = points.FirstOrDefault(p => p.Id == routePointId)
+            ?? throw new InvalidOperationException("Остановка не найдена.");
+
+        if (point.Status == RoutePointStatus.Arrived)
+        {
+            return (await GetAsync(tenantId, routeId, ct))!;
+        }
+
+        if (point.Status != RoutePointStatus.Pending)
+        {
+            throw new InvalidOperationException("На эту остановку уже нельзя отметиться.");
+        }
+
+        var now = clock.GetUtcNow();
+        point.Status = RoutePointStatus.Arrived;
+        point.ActualArrivalAt = now;
+        route.UpdatedAt = now;
+
+        var order = orders.FirstOrDefault(o => o.Id == point.OrderId);
+        if (order is not null)
+        {
+            ApplyOrderTransition(order, OrderStatus.InTransit, "Курьер на точке", now);
+        }
+
+        db.SyncChanges.Add(SyncChangeFactory.ForRoute(route, orders, now));
+        await db.SaveChangesAsync(ct);
+
+        return (await GetAsync(tenantId, routeId, ct))!;
+    }
+
+    public async Task<RouteDetailsDto> DeliverAsync(
+        Guid tenantId,
+        Guid courierId,
+        Guid routeId,
+        Guid routePointId,
+        CancellationToken ct = default)
+    {
+        var route = await LoadCourierRouteAsync(tenantId, courierId, routeId, ct);
+        EnsureRouteInProgress(route);
+
+        var (points, orders) = await LoadActiveRouteOrdersAsync(route.Id, ct);
+        var point = points.FirstOrDefault(p => p.Id == routePointId)
+            ?? throw new InvalidOperationException("Остановка не найдена.");
+
+        if (point.Status == RoutePointStatus.Delivered)
+        {
+            return (await GetAsync(tenantId, routeId, ct))!;
+        }
+
+        if (point.Status != RoutePointStatus.Arrived)
+        {
+            throw new InvalidOperationException("Сначала отметьтесь «На точке».");
+        }
+
+        var now = clock.GetUtcNow();
+        point.Status = RoutePointStatus.Delivered;
+        point.CompletedAt = now;
+        route.UpdatedAt = now;
+
+        var order = orders.FirstOrDefault(o => o.Id == point.OrderId);
+        if (order is not null)
+        {
+            ApplyOrderTransition(order, OrderStatus.Delivered, "Доставлено", now);
+        }
+
+        CompleteRouteIfDone(route, points, now);
+        db.SyncChanges.Add(SyncChangeFactory.ForRoute(route, orders, now));
+        await db.SaveChangesAsync(ct);
+
+        return (await GetAsync(tenantId, routeId, ct))!;
+    }
+
+    public async Task<RouteDetailsDto> ReportProblemAsync(
+        Guid tenantId,
+        Guid courierId,
+        Guid routeId,
+        Guid routePointId,
+        string? comment,
+        CancellationToken ct = default)
+    {
+        var route = await LoadCourierRouteAsync(tenantId, courierId, routeId, ct);
+        EnsureRouteInProgress(route);
+
+        var (points, orders) = await LoadActiveRouteOrdersAsync(route.Id, ct);
+        var point = points.FirstOrDefault(p => p.Id == routePointId)
+            ?? throw new InvalidOperationException("Остановка не найдена.");
+
+        if (point.Status is not (RoutePointStatus.Pending or RoutePointStatus.Arrived))
+        {
+            throw new InvalidOperationException("По этой остановке уже зафиксирован результат.");
+        }
+
+        var now = clock.GetUtcNow();
+        point.Status = RoutePointStatus.Problem;
+        point.CompletedAt = now;
+        route.UpdatedAt = now;
+
+        var order = orders.FirstOrDefault(o => o.Id == point.OrderId);
+        var problemComment = string.IsNullOrWhiteSpace(comment) ? "Проблема на точке" : comment.Trim();
+        if (order is not null)
+        {
+            ApplyOrderTransition(order, OrderStatus.Problem, problemComment, now);
+        }
+
+        CompleteRouteIfDone(route, points, now);
+        db.SyncChanges.Add(SyncChangeFactory.ForRoute(route, orders, now));
+        await db.SaveChangesAsync(ct);
+
+        return (await GetAsync(tenantId, routeId, ct))!;
+    }
+
     public async Task<IReadOnlyList<AvailableOrderDto>> ListAvailableOrdersAsync(
         Guid tenantId,
         DateOnly date,
@@ -692,6 +870,7 @@ public sealed class RouteService
                 p.Order.TotalWeight,
                 p.PlannedArrivalFrom,
                 p.PlannedArrivalTo,
+                p.Status,
                 p.Order.Status))
             .ToList();
 
@@ -703,6 +882,7 @@ public sealed class RouteService
             route.Status,
             route.IsLocked,
             await IsPlanningLockedAsync(tenantId, route.Date, ct),
+            route.AcceptedAt,
             route.TotalPoints,
             route.TotalWeight,
             route.TotalDistance,
@@ -725,6 +905,100 @@ public sealed class RouteService
         catch (InvalidTimeZoneException)
         {
             return clock.GetUtcNow();
+        }
+    }
+
+    private async Task<Route> LoadCourierRouteAsync(
+        Guid tenantId,
+        Guid courierId,
+        Guid routeId,
+        CancellationToken ct)
+    {
+        var route = await db.Routes.FirstOrDefaultAsync(
+            r => r.TenantId == tenantId && r.Id == routeId && r.CourierId == courierId,
+            ct);
+
+        if (route is null)
+        {
+            throw new InvalidOperationException("Маршрут не найден.");
+        }
+
+        return route;
+    }
+
+    private static void EnsureRouteInProgress(Route route)
+    {
+        if (route.Status != RouteStatus.InProgress)
+        {
+            throw new InvalidOperationException("Маршрут ещё не начат.");
+        }
+    }
+
+    private async Task<(List<RoutePoint> Points, List<Order> Orders)> LoadActiveRouteOrdersAsync(
+        Guid routeId,
+        CancellationToken ct)
+    {
+        var points = await db.RoutePoints
+            .Where(p => p.RouteId == routeId && p.IsActive)
+            .Include(p => p.Order)
+            .ThenInclude(o => o!.Point)
+            .OrderBy(p => p.SequenceNumber)
+            .ToListAsync(ct);
+
+        var orders = points
+            .Where(p => p.Order is not null)
+            .Select(p => p.Order!)
+            .ToList();
+
+        return (points, orders);
+    }
+
+    private void ApplyOrderTransition(
+        Order order,
+        OrderStatus toStatus,
+        string comment,
+        DateTimeOffset now)
+    {
+        if (order.Status == toStatus
+            || !OrderStatusTransitions.IsAllowed(order.Status, toStatus))
+        {
+            return;
+        }
+
+        var fromStatus = order.Status;
+        order.Status = toStatus;
+        order.Version++;
+        order.UpdatedAt = now;
+
+        db.OrderStatusHistory.Add(new OrderStatusHistory
+        {
+            OrderId = order.Id,
+            FromStatus = fromStatus,
+            ToStatus = toStatus,
+            ChangedAt = now,
+            IsSystemAction = false,
+            Comment = comment
+        });
+
+        db.SyncChanges.Add(SyncChangeFactory.ForOrder(order, SyncChangeType.Upsert, now));
+    }
+
+    private static void CompleteRouteIfDone(
+        Route route,
+        IReadOnlyList<RoutePoint> points,
+        DateTimeOffset now)
+    {
+        if (points.Count == 0)
+        {
+            return;
+        }
+
+        if (points.All(p => p.Status is RoutePointStatus.Delivered
+                or RoutePointStatus.Problem
+                or RoutePointStatus.Cancelled))
+        {
+            route.Status = RouteStatus.Completed;
+            route.UpdatedAt = now;
         }
     }
 

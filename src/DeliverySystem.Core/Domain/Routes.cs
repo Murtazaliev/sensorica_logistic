@@ -75,6 +75,7 @@ public sealed class Route
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? ConfirmedAt { get; set; }
+    public DateTimeOffset? AcceptedAt { get; set; }
     public string? CancelledReason { get; set; }
 
     [JsonIgnore]

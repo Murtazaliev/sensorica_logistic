@@ -217,6 +217,77 @@ public sealed class RouteScenariosTests
     }
 
     [Fact]
+    public async Task CourierLifecycle_AcceptStartDeliver_CompletesRoute()
+    {
+        await using var testDb = await TestDatabase.CreateAsync();
+        var clock = new MutableTimeProvider(Morning);
+        var (first, second, _) = await SeedOrdersAsync(testDb, Date);
+
+        await using var db = testDb.NewContext();
+        var routes = new RouteService(db, clock);
+        var draft = await routes.EnsureDraftAsync(TestDatabase.TenantId, TestDatabase.CourierId, Date);
+        var withStops = await routes.SetStopsAsync(TestDatabase.TenantId, draft.Id, [first, second]);
+        await routes.ConfirmAsync(TestDatabase.TenantId, draft.Id);
+
+        var accepted = await routes.AcceptAsync(
+            TestDatabase.TenantId, TestDatabase.CourierId, draft.Id);
+        Assert.NotNull(accepted.AcceptedAt);
+
+        var started = await routes.StartAsync(
+            TestDatabase.TenantId, TestDatabase.CourierId, draft.Id);
+        Assert.Equal(RouteStatus.InProgress, started.Status);
+        Assert.All(started.Stops, s => Assert.Equal(OrderStatus.InTransit, s.OrderStatus));
+
+        var firstStop = withStops.Stops.First(s => s.OrderId == first);
+        await routes.ArriveAsync(
+            TestDatabase.TenantId, TestDatabase.CourierId, draft.Id, firstStop.Id);
+        var delivered = await routes.DeliverAsync(
+            TestDatabase.TenantId, TestDatabase.CourierId, draft.Id, firstStop.Id);
+        Assert.Equal(RouteStatus.InProgress, delivered.Status);
+
+        var secondStop = delivered.Stops.First(s => s.OrderId == second);
+        await routes.ArriveAsync(
+            TestDatabase.TenantId, TestDatabase.CourierId, draft.Id, secondStop.Id);
+        var completed = await routes.DeliverAsync(
+            TestDatabase.TenantId, TestDatabase.CourierId, draft.Id, secondStop.Id);
+
+        Assert.Equal(RouteStatus.Completed, completed.Status);
+        Assert.All(completed.Stops, s => Assert.Equal(OrderStatus.Delivered, s.OrderStatus));
+    }
+
+    [Fact]
+    public async Task CourierProblem_CompletesRouteAndMarksOrderProblem()
+    {
+        await using var testDb = await TestDatabase.CreateAsync();
+        var clock = new MutableTimeProvider(Morning);
+        var (first, _, _) = await SeedOrdersAsync(testDb, Date);
+
+        await using var db = testDb.NewContext();
+        var routes = new RouteService(db, clock);
+        var draft = await routes.EnsureDraftAsync(TestDatabase.TenantId, TestDatabase.CourierId, Date);
+        var withStops = await routes.SetStopsAsync(TestDatabase.TenantId, draft.Id, [first]);
+        await routes.ConfirmAsync(TestDatabase.TenantId, draft.Id);
+        await routes.StartAsync(TestDatabase.TenantId, TestDatabase.CourierId, draft.Id);
+
+        var result = await routes.ReportProblemAsync(
+            TestDatabase.TenantId,
+            TestDatabase.CourierId,
+            draft.Id,
+            withStops.Stops[0].Id,
+            "Точка закрыта");
+
+        Assert.Equal(RouteStatus.Completed, result.Status);
+        Assert.Equal(OrderStatus.Problem, result.Stops[0].OrderStatus);
+
+        var history = (await db.OrderStatusHistory
+                .Where(h => h.OrderId == first)
+                .ToListAsync())
+            .OrderBy(h => h.ChangedAt)
+            .ToList();
+        Assert.Contains(history, h => h.Comment == "Точка закрыта");
+    }
+
+    [Fact]
     public async Task Confirm_EmptyRoute_Throws()
     {
         await using var testDb = await TestDatabase.CreateAsync();

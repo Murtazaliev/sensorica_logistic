@@ -297,9 +297,12 @@ public static class DevSeed
                 "CreatedAt" TEXT NOT NULL,
                 "UpdatedAt" TEXT NOT NULL,
                 "ConfirmedAt" TEXT NULL,
+                "AcceptedAt" TEXT NULL,
                 "CancelledReason" TEXT NULL
             );
             """);
+
+        EnsureRouteAcceptedAtColumn(db);
 
         db.Database.ExecuteSqlRaw("""
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_Routes_CourierId_Date" ON "Routes" ("CourierId", "Date");
@@ -338,5 +341,47 @@ public static class DevSeed
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_RoutePoints_OrderId_Active"
                 ON "RoutePoints" ("OrderId") WHERE "IsActive" = 1;
             """);
+    }
+
+    private static void EnsureRouteAcceptedAtColumn(AppDbContext db)
+    {
+        var conn = db.Database.GetDbConnection();
+        var shouldClose = conn.State != System.Data.ConnectionState.Open;
+        if (shouldClose)
+        {
+            conn.Open();
+        }
+
+        try
+        {
+            var hasColumn = false;
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "PRAGMA table_info('Routes');";
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    if (string.Equals(reader.GetString(1), "AcceptedAt", StringComparison.OrdinalIgnoreCase))
+                    {
+                        hasColumn = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!hasColumn)
+            {
+                using var alter = conn.CreateCommand();
+                alter.CommandText = "ALTER TABLE \"Routes\" ADD COLUMN \"AcceptedAt\" TEXT NULL;";
+                alter.ExecuteNonQuery();
+            }
+        }
+        finally
+        {
+            if (shouldClose)
+            {
+                conn.Close();
+            }
+        }
     }
 }

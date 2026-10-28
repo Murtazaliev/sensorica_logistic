@@ -51,4 +51,15 @@ public static class RouteDisplay
         RoutePointStatus.Reassigned => "Переназначено",
         _ => status.ToString()
     };
+
+    public static string CssClass(RoutePointStatus status) => status switch
+    {
+        RoutePointStatus.Pending => "status-scheduled",
+        RoutePointStatus.Arrived => "status-intransit",
+        RoutePointStatus.Delivered => "status-delivered",
+        RoutePointStatus.Problem => "status-problem",
+        RoutePointStatus.Cancelled => "status-cancelled",
+        RoutePointStatus.Reassigned => "status-cancelled",
+        _ => "status-new"
+    };
 }

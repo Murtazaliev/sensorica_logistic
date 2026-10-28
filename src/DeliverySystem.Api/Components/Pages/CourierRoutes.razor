@@ -84,7 +84,35 @@ else
                     <strong>@_route.CourierName</strong>
                     <span class="muted">@_route.Date.ToString("dd.MM.yyyy")</span>
                     <span class="badge @RouteDisplay.CssClass(_route.Status)">@RouteDisplay.Label(_route.Status)</span>
+                    @if (_route.Stops.Count > 0)
+                    {
+                        <span class="muted">
+                            выполнено @DeliveredCount из @_route.Stops.Count
+                        </span>
+                    }
                 </div>
+
+                @if (_route.Status == RouteStatus.Confirmed)
+                {
+                    <div class="actions">
+                        @if (_route.AcceptedAt is null)
+                        {
+                            <button class="btn primary" @onclick="AcceptAsync" disabled="@_busy">
+                                Принять маршрут
+                            </button>
+                        }
+                        <button class="btn primary" @onclick="StartAsync" disabled="@_busy">
+                            Начать маршрут
+                        </button>
+                    </div>
+                }
+                else if (_route.Status == RouteStatus.InProgress)
+                {
+                    <div class="form-field">
+                        <label class="field-label">Комментарий к проблеме</label>
+                        <input class="input" @bind="_problemComment" placeholder="Необязательно" />
+                    </div>
+                }
 
                 @if (_route.Stops.Count == 0)
                 {
@@ -108,7 +136,33 @@ else
                                         @stop.Weight.ToString("0.###") кг
                                     </small>
                                 </div>
-                                <span class="badge @OrderStatusClass(stop.OrderStatus)">@StatusDisplay.Label(stop.OrderStatus)</span>
+                                <div class="route-stop-status">
+                                    <span class="badge @RouteDisplay.CssClass(stop.Status)">@RouteDisplay.Label(stop.Status)</span>
+                                    <span class="badge @OrderStatusClass(stop.OrderStatus)">@StatusDisplay.Label(stop.OrderStatus)</span>
+                                </div>
+                                @if (_route.Status == RouteStatus.InProgress)
+                                {
+                                    <div class="route-stop-actions">
+                                        @if (stop.Status == RoutePointStatus.Pending)
+                                        {
+                                            <button class="btn small" @onclick="() => ArriveAsync(stop)" disabled="@_busy">
+                                                Я на точке
+                                            </button>
+                                        }
+                                        @if (stop.Status == RoutePointStatus.Arrived)
+                                        {
+                                            <button class="btn small primary" @onclick="() => DeliverAsync(stop)" disabled="@_busy">
+                                                Доставлено
+                                            </button>
+                                        }
+                                        @if (stop.Status is RoutePointStatus.Pending or RoutePointStatus.Arrived)
+                                        {
+                                            <button class="btn small" @onclick="() => ProblemAsync(stop)" disabled="@_busy">
+                                                Проблема
+                                            </button>
+                                        }
+                                    </div>
+                                }
                             </li>
                         }
                     </ol>
@@ -147,11 +201,15 @@ else
     private string _courierName = "Курьер";
     private RouteDetailsDto? _route;
     private bool _loading = true;
+    private bool _busy;
     private bool _mapInitialized;
     private bool _isError;
     private string? _message;
+    private string? _problemComment;
     private string? _mapError;
     private string _mapKey = string.Empty;
+
+    private int DeliveredCount => _route?.Stops.Count(s => s.Status == RoutePointStatus.Delivered) ?? 0;
 
     protected override async Task OnInitializedAsync()
     {
@@ -226,6 +284,118 @@ else
         _date = date;
         _message = null;
         await LoadAsync();
+    }
+
+    private async Task AcceptAsync()
+    {
+        if (_route is null || _courierId is null || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var routes = scope.ServiceProvider.GetRequiredService<RouteService>();
+            _route = await routes.AcceptAsync(DevSeed.TenantId, _courierId.Value, _route.Id);
+            _isError = false;
+            _message = "Маршрут принят.";
+        }
+        catch (Exception ex)
+        {
+            _isError = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task StartAsync()
+    {
+        if (_route is null || _courierId is null || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var routes = scope.ServiceProvider.GetRequiredService<RouteService>();
+            _route = await routes.StartAsync(DevSeed.TenantId, _courierId.Value, _route.Id);
+            _isError = false;
+            _message = "Маршрут начат. Заказы переведены в «В пути».";
+        }
+        catch (Exception ex)
+        {
+            _isError = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ArriveAsync(RouteStopDto stop)
+    {
+        await ApplyStopActionAsync(stop, (service, routeId) =>
+            service.ArriveAsync(DevSeed.TenantId, _courierId!.Value, routeId, stop.Id),
+            "Отмечено: курьер на точке.");
+    }
+
+    private async Task DeliverAsync(RouteStopDto stop)
+    {
+        await ApplyStopActionAsync(stop, (service, routeId) =>
+            service.DeliverAsync(DevSeed.TenantId, _courierId!.Value, routeId, stop.Id),
+            $"Заказ {stop.OrderNumber} доставлен.");
+    }
+
+    private async Task ProblemAsync(RouteStopDto stop)
+    {
+        await ApplyStopActionAsync(stop, (service, routeId) =>
+            service.ReportProblemAsync(
+                DevSeed.TenantId,
+                _courierId!.Value,
+                routeId,
+                stop.Id,
+                _problemComment),
+            $"По заказу {stop.OrderNumber} зафиксирована проблема.");
+
+        _problemComment = null;
+    }
+
+    private async Task ApplyStopActionAsync(
+        RouteStopDto stop,
+        Func<RouteService, Guid, Task<RouteDetailsDto>> action,
+        string successMessage)
+    {
+        if (_route is null || _courierId is null || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await using var scope = ScopeFactory.CreateAsyncScope();
+            var routes = scope.ServiceProvider.GetRequiredService<RouteService>();
+            _route = await action(routes, _route.Id);
+            _isError = false;
+            _message = successMessage;
+        }
+        catch (Exception ex)
+        {
+            _isError = true;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task LoadAsync()
