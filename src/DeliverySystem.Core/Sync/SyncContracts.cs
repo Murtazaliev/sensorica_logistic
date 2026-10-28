@@ -37,6 +37,15 @@ public sealed record SetOrderStatusPayload(
     long ExpectedVersion,
     string? Comment = null);
 
+public sealed record RouteOperationPayload(Guid RouteId);
+
+public sealed record RoutePointOperationPayload(Guid RouteId, Guid RoutePointId);
+
+public sealed record RoutePointProblemPayload(
+    Guid RouteId,
+    Guid RoutePointId,
+    string? Comment = null);
+
 public sealed record OrderSyncSnapshot(
     Guid Id,
     string OrderNumber,
@@ -86,6 +95,12 @@ public sealed record RouteSyncSnapshot(
 public interface ISyncService
 {
     Task<SyncPushResult> PushAsync(Guid tenantId, SyncPushRequest request, CancellationToken ct = default);
+
+    Task<SyncPushResult> PushCourierAsync(
+        Guid tenantId,
+        Guid courierId,
+        SyncPushRequest request,
+        CancellationToken ct = default);
 
     Task<SyncPullResult> PullAsync(Guid tenantId, long since, int limit, CancellationToken ct = default);
 

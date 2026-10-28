@@ -1,23 +1,41 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using DeliverySystem.Core.Domain;
+using DeliverySystem.Core.Routes;
 using DeliverySystem.Core.Sync;
 using DeliverySystem.Infrastructure.Persistence;
+using DeliverySystem.Infrastructure.Routes;
 using Microsoft.EntityFrameworkCore;
 
 namespace DeliverySystem.Infrastructure.Sync;
 
-public sealed class SyncService(AppDbContext db) : ISyncService
+public sealed class SyncService(
+    AppDbContext db,
+    RouteService? routeService = null) : ISyncService
 {
-    public async Task<SyncPushResult> PushAsync(
+    public Task<SyncPushResult> PushAsync(
         Guid tenantId,
         SyncPushRequest request,
         CancellationToken ct = default)
+        => PushCoreAsync(tenantId, null, request, ct);
+
+    public Task<SyncPushResult> PushCourierAsync(
+        Guid tenantId,
+        Guid courierId,
+        SyncPushRequest request,
+        CancellationToken ct = default)
+        => PushCoreAsync(tenantId, courierId, request, ct);
+
+    private async Task<SyncPushResult> PushCoreAsync(
+        Guid tenantId,
+        Guid? courierId,
+        SyncPushRequest request,
+        CancellationToken ct)
     {
         var results = new List<SyncOperationResult>(request.Operations.Count);
 
         foreach (var operation in request.Operations)
         {
-            results.Add(await ApplyAsync(tenantId, request.DeviceId, operation, ct));
+            results.Add(await ApplyAsync(tenantId, courierId, request.DeviceId, operation, ct));
         }
 
         return new SyncPushResult(results);
@@ -82,6 +100,7 @@ public sealed class SyncService(AppDbContext db) : ISyncService
 
     private async Task<SyncOperationResult> ApplyAsync(
         Guid tenantId,
+        Guid? courierId,
         string deviceId,
         SyncPushOperation operation,
         CancellationToken ct)
@@ -98,6 +117,13 @@ public sealed class SyncService(AppDbContext db) : ISyncService
         var outcome = operation.Type switch
         {
             SyncOperationType.SetOrderStatus => await ApplySetOrderStatusAsync(tenantId, operation, now, ct),
+            SyncOperationType.AcceptRoute
+                or SyncOperationType.StartRoute
+                or SyncOperationType.ArriveRoutePoint
+                or SyncOperationType.DeliverRoutePoint
+                or SyncOperationType.ProblemRoutePoint => courierId is null
+                    ? new Outcome(SyncOperationStatus.Rejected, null, "courier_required")
+                    : await ApplyRouteOperationAsync(tenantId, courierId.Value, operation, ct),
             _ => new Outcome(SyncOperationStatus.Rejected, null, "unsupported_operation")
         };
 
@@ -195,7 +221,7 @@ public sealed class SyncService(AppDbContext db) : ISyncService
             ToStatus = payload.ToStatus,
             ChangedAt = now,
             IsSystemAction = false,
-            Comment = string.IsNullOrWhiteSpace(payload.Comment) ? "Синхронизация" : payload.Comment,
+            Comment = string.IsNullOrWhiteSpace(payload.Comment) ? "РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ" : payload.Comment,
             CorrelationId = operation.ClientOperationId.ToString()
         });
 
@@ -204,7 +230,124 @@ public sealed class SyncService(AppDbContext db) : ISyncService
         return new Outcome(SyncOperationStatus.Applied, Snapshot(order), null);
     }
 
-    private Task<SyncOperation?> FindOperationAsync(Guid tenantId, Guid clientOperationId, CancellationToken ct)
+    private async Task<Outcome> ApplyRouteOperationAsync(
+        Guid tenantId,
+        Guid courierId,
+        SyncPushOperation operation,
+        CancellationToken ct)
+    {
+        if (routeService is null)
+        {
+            return new Outcome(SyncOperationStatus.Rejected, null, "route_service_unavailable");
+        }
+
+        try
+        {
+            RouteDetailsDto details;
+
+            switch (operation.Type)
+            {
+                case SyncOperationType.AcceptRoute:
+                {
+                    var payload = SyncJson.Deserialize<RouteOperationPayload>(operation.PayloadJson);
+                    if (payload is null)
+                    {
+                        return new Outcome(SyncOperationStatus.Rejected, null, "invalid_payload");
+                    }
+
+                    details = await routeService.AcceptAsync(
+                        tenantId,
+                        courierId,
+                        payload.RouteId,
+                        ct);
+                    break;
+                }
+                case SyncOperationType.StartRoute:
+                {
+                    var payload = SyncJson.Deserialize<RouteOperationPayload>(operation.PayloadJson);
+                    if (payload is null)
+                    {
+                        return new Outcome(SyncOperationStatus.Rejected, null, "invalid_payload");
+                    }
+
+                    details = await routeService.StartAsync(
+                        tenantId,
+                        courierId,
+                        payload.RouteId,
+                        ct);
+                    break;
+                }
+                case SyncOperationType.ArriveRoutePoint:
+                {
+                    var payload = SyncJson.Deserialize<RoutePointOperationPayload>(operation.PayloadJson);
+                    if (payload is null)
+                    {
+                        return new Outcome(SyncOperationStatus.Rejected, null, "invalid_payload");
+                    }
+
+                    details = await routeService.ArriveAsync(
+                        tenantId,
+                        courierId,
+                        payload.RouteId,
+                        payload.RoutePointId,
+                        ct);
+                    break;
+                }
+                case SyncOperationType.DeliverRoutePoint:
+                {
+                    var payload = SyncJson.Deserialize<RoutePointOperationPayload>(operation.PayloadJson);
+                    if (payload is null)
+                    {
+                        return new Outcome(SyncOperationStatus.Rejected, null, "invalid_payload");
+                    }
+
+                    details = await routeService.DeliverAsync(
+                        tenantId,
+                        courierId,
+                        payload.RouteId,
+                        payload.RoutePointId,
+                        ct);
+                    break;
+                }
+                case SyncOperationType.ProblemRoutePoint:
+                {
+                    var payload = SyncJson.Deserialize<RoutePointProblemPayload>(operation.PayloadJson);
+                    if (payload is null)
+                    {
+                        return new Outcome(SyncOperationStatus.Rejected, null, "invalid_payload");
+                    }
+
+                    details = await routeService.ReportProblemAsync(
+                        tenantId,
+                        courierId,
+                        payload.RouteId,
+                        payload.RoutePointId,
+                        payload.Comment,
+                        ct);
+                    break;
+                }
+                default:
+                    return new Outcome(SyncOperationStatus.Rejected, null, "unsupported_operation");
+            }
+
+            return new Outcome(SyncOperationStatus.Applied, SyncJson.Serialize(details), null);
+        }
+        catch (JsonException)
+        {
+            return new Outcome(SyncOperationStatus.Rejected, null, "invalid_payload");
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new Outcome(SyncOperationStatus.Rejected, null, "route_error: " + ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return new Outcome(SyncOperationStatus.Rejected, null, "route_error: " + ex.Message);
+        }
+    }
+
+
+private Task<SyncOperation?> FindOperationAsync(Guid tenantId, Guid clientOperationId, CancellationToken ct)
     {
         return db.SyncOperations
             .AsNoTracking()
@@ -238,3 +381,5 @@ public sealed class SyncService(AppDbContext db) : ISyncService
             ResultJson);
     }
 }
+
+

@@ -66,6 +66,11 @@ public static class StatusDisplay
     public static string Label(SyncOperationType type) => type switch
     {
         SyncOperationType.SetOrderStatus => "Смена статуса",
+        SyncOperationType.AcceptRoute => "Принятие маршрута",
+        SyncOperationType.StartRoute => "Старт маршрута",
+        SyncOperationType.ArriveRoutePoint => "Прибытие на точку",
+        SyncOperationType.DeliverRoutePoint => "Доставка точки",
+        SyncOperationType.ProblemRoutePoint => "Проблема на точке",
         _ => type.ToString()
     };
 

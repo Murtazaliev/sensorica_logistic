@@ -2,7 +2,12 @@ namespace DeliverySystem.Core.Domain;
 
 public enum SyncOperationType
 {
-    SetOrderStatus
+    SetOrderStatus,
+    AcceptRoute,
+    StartRoute,
+    ArriveRoutePoint,
+    DeliverRoutePoint,
+    ProblemRoutePoint
 }
 
 public enum SyncOperationStatus

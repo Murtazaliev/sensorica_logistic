@@ -115,6 +115,7 @@ builder.Services.AddAuthorization(options =>
         nameof(UserRole.Admin),
         nameof(UserRole.Head)));
     options.AddPolicy("AdminOnly", policy => policy.RequireRole(nameof(UserRole.Admin)));
+    options.AddPolicy("CourierOnly", policy => policy.RequireRole(nameof(UserRole.Courier)));
 });
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
@@ -160,7 +161,8 @@ app.MapGet("/", () => Results.Ok(new
         reverse = "/api/geocode/reverse?lat=55.7558&lng=37.6173",
         suggest = "/api/suggest?q=Тверская"
     },
-    sync = new { push = "/api/sync/push", pull = "/api/sync/pull?since=0&limit=100" }
+    sync = new { push = "/api/sync/push", pull = "/api/sync/pull?since=0&limit=100" },
+    courierSync = "/api/courier/sync/push"
 }));
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
@@ -483,6 +485,37 @@ app.MapPost("/api/sync/push", async (
 
     return Results.Ok(await sync.PushAsync(DevSeed.TenantId, request, ct));
 }).RequireAuthorization();
+
+app.MapPost("/api/courier/sync/push", async (
+    HttpContext ctx,
+    SyncPushRequest request,
+    ISyncService sync,
+    RouteService routes,
+    CancellationToken ct) =>
+{
+    if (request.Operations is null || request.Operations.Count == 0)
+    {
+        return Results.BadRequest(new { error = "operations_required" });
+    }
+
+    var userIdValue = ctx.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    if (!Guid.TryParse(userIdValue, out var userId))
+    {
+        return Results.Forbid();
+    }
+
+    var courierId = await routes.GetCourierIdForUserAsync(DevSeed.TenantId, userId, ct);
+    if (courierId is null)
+    {
+        return Results.Forbid();
+    }
+
+    return Results.Ok(await sync.PushCourierAsync(
+        DevSeed.TenantId,
+        courierId.Value,
+        request,
+        ct));
+}).RequireAuthorization("CourierOnly");
 
 app.MapGet("/api/sync/pull", async (
     long? since,
