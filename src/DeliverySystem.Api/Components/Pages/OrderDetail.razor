@@ -1,8 +1,10 @@
 @page "/orders/{Id:guid}"
 @attribute [Authorize(Roles = "Dispatcher,Admin,Head")]
 @using DeliverySystem.Core.Domain
+@using DeliverySystem.Core.Routes
 @using DeliverySystem.Core.Sync
 @using DeliverySystem.Infrastructure.Persistence
+@using DeliverySystem.Infrastructure.Routes
 @using DeliverySystem.Infrastructure.Sync
 @using Microsoft.EntityFrameworkCore
 @inject IServiceScopeFactory ScopeFactory
@@ -71,6 +73,33 @@ else
                 </dd>
                 <dt>Телефон</dt>
                 <dd>@(_order.Point?.Phone ?? "—")</dd>
+                <dt>Курьер</dt>
+                <dd>
+                    @if (_assignment is not null)
+                    {
+                        <span>@_assignment.CourierName</span>
+                        <span class="badge @RouteDisplay.CssClass(_assignment.Status)">
+                            @RouteDisplay.Label(_assignment.Status)
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="muted">не назначен</span>
+                    }
+                </dd>
+                @if (_assignment is not null)
+                {
+                    <dt>Маршрут</dt>
+                    <dd>
+                        <a href="/routes">маршруты на @_assignment.Date.ToString("dd.MM.yyyy")</a>
+                        @if (_assignment.PlannedArrivalFrom is not null && _assignment.PlannedArrivalTo is not null)
+                        {
+                            <span class="muted">
+                                · окно @_assignment.PlannedArrivalFrom.Value.ToString("HH\\:mm")–@_assignment.PlannedArrivalTo.Value.ToString("HH\\:mm")
+                            </span>
+                        }
+                    </dd>
+                }
                 <dt>Дата</dt>
                 <dd>@_order.RequestedDate.ToString("dd.MM.yyyy")</dd>
                 <dt>Исходная дата</dt>
@@ -185,6 +214,7 @@ else
     private string? _message;
     private bool _isError;
     private string? _comment;
+    private OrderRouteAssignmentDto? _assignment;
 
     private IEnumerable<OrderStatus> AllowedTargets => _order is null
         ? []
@@ -209,6 +239,14 @@ else
                 .Include(o => o.Items)
                 .Include(o => o.StatusHistory)
                 .FirstOrDefaultAsync(o => o.Id == Id && o.TenantId == DevSeed.TenantId);
+
+            if (_order is not null)
+            {
+                var routes = scope.ServiceProvider.GetRequiredService<RouteService>();
+                _assignment = (await routes.GetOrderAssignmentsAsync(
+                    DevSeed.TenantId,
+                    [_order.Id])).FirstOrDefault();
+            }
         }
         catch (Exception ex)
         {

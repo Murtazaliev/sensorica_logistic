@@ -75,6 +75,6 @@ delivery-system-kb/
 
 - Фаза: **разработка начата**; UI диспетчера, 2ГИС, auth/RBAC и MVP маршрутов готовы.
 - Спека: **v2.0** (после ревью на пробелы).
-- Код: `src/` на .NET 10, **34/34 теста зелёные**, Swagger UI, экраны `/orders`, `/routes`, `/my-routes`, `/points`, `/sync`, вход `/login`.
+- Код: `src/` на .NET 10, **35/35 тестов зелёные**, Swagger UI, экраны `/orders`, `/routes`, `/my-routes`, `/points`, `/sync`, вход `/login`.
 - Следующая цель: TSP/VRP и ETA по остановкам, затем OTP и управление пользователями.
 - Подробнее: `30-plan/current-state.md`.

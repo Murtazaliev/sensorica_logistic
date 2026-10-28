@@ -56,6 +56,16 @@ public sealed record RouteDetailsDto(
 
 public sealed record RouteCoordinateDto(double Latitude, double Longitude);
 
+public sealed record OrderRouteAssignmentDto(
+    Guid OrderId,
+    Guid RouteId,
+    string CourierName,
+    DateOnly Date,
+    RouteStatus Status,
+    RoutePointStatus PointStatus,
+    TimeOnly? PlannedArrivalFrom,
+    TimeOnly? PlannedArrivalTo);
+
 public sealed record AvailableOrderDto(
     Guid OrderId,
     string OrderNumber,

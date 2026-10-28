@@ -1,7 +1,9 @@
 @page "/orders"
 @attribute [Authorize(Roles = "Dispatcher,Admin,Head")]
 @using DeliverySystem.Core.Domain
+@using DeliverySystem.Core.Routes
 @using DeliverySystem.Infrastructure.Persistence
+@using DeliverySystem.Infrastructure.Routes
 @using Microsoft.EntityFrameworkCore
 @inject IServiceScopeFactory ScopeFactory
 
@@ -27,7 +29,7 @@
 </div>
 
 <div class="filters">
-    <input class="input" placeholder="Номер, точка, лид..." @bind="_search" @bind:event="oninput" />
+    <input class="input" placeholder="Номер, точка, курьер, лид..." @bind="_search" @bind:event="oninput" />
     <select class="input" @bind="_statusFilter">
         <option value="">Все статусы</option>
         @foreach (var status in Enum.GetValues<OrderStatus>())
@@ -67,6 +69,7 @@ else
                     <th>Номер</th>
                     <th>Точка</th>
                     <th>Дата</th>
+                    <th>Курьер</th>
                     <th>Статус</th>
                     <th>Вес</th>
                     <th>Позиции</th>
@@ -93,6 +96,19 @@ else
                             }
                         </td>
                         <td>@order.RequestedDate.ToString("dd.MM.yyyy")</td>
+                        <td>
+                            @if (_assignments.TryGetValue(order.Id, out var assignment))
+                            {
+                                <div>@assignment.CourierName</div>
+                                <span class="badge @RouteDisplay.CssClass(assignment.Status)">
+                                    @RouteDisplay.Label(assignment.Status)
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="muted">не назначен</span>
+                            }
+                        </td>
                         <td><span class="badge @StatusDisplay.CssClass(order.Status)">@StatusDisplay.Label(order.Status)</span></td>
                         <td>@order.TotalWeight.ToString("0.###") кг</td>
                         <td>@order.Items.Count</td>
@@ -107,6 +123,7 @@ else
 
 @code {
     private List<Order> _orders = [];
+    private Dictionary<Guid, OrderRouteAssignmentDto> _assignments = [];
     private bool _loading;
     private string? _error;
     private string _search = string.Empty;
@@ -133,6 +150,12 @@ else
                 .Include(o => o.Items)
                 .ToListAsync();
 
+            var routes = scope.ServiceProvider.GetRequiredService<RouteService>();
+            var assignments = await routes.GetOrderAssignmentsAsync(
+                DevSeed.TenantId,
+                _orders.Select(o => o.Id).ToList());
+
+            _assignments = assignments.ToDictionary(a => a.OrderId);
             _loadedAt = DateTimeOffset.UtcNow;
         }
         catch (Exception ex)
@@ -157,6 +180,8 @@ else
                 query = query.Where(o =>
                     o.OrderNumber.Contains(term, StringComparison.OrdinalIgnoreCase) ||
                     (o.Point?.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (_assignments.TryGetValue(o.Id, out var assignment)
+                     && assignment.CourierName.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
                     (o.AmoLeadId?.ToString().Contains(term) ?? false));
             }
 

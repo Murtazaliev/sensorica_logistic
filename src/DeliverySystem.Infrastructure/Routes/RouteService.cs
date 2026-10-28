@@ -785,6 +785,37 @@ public sealed class RouteService
         return (await GetAsync(tenantId, routeId, ct))!;
     }
 
+    public async Task<IReadOnlyList<OrderRouteAssignmentDto>> GetOrderAssignmentsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> orderIds,
+        CancellationToken ct = default)
+    {
+        if (orderIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await (
+                from point in db.RoutePoints
+                join route in db.Routes on point.RouteId equals route.Id
+                join courier in db.Couriers on route.CourierId equals courier.Id
+                join user in db.Users on courier.UserId equals user.Id
+                where point.IsActive
+                      && route.TenantId == tenantId
+                      && route.Status != RouteStatus.Cancelled
+                      && orderIds.Contains(point.OrderId)
+                select new OrderRouteAssignmentDto(
+                    point.OrderId,
+                    route.Id,
+                    user.FullName,
+                    route.Date,
+                    route.Status,
+                    point.Status,
+                    point.PlannedArrivalFrom,
+                    point.PlannedArrivalTo))
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<AvailableOrderDto>> ListAvailableOrdersAsync(
         Guid tenantId,
         DateOnly date,

@@ -146,6 +146,28 @@ public sealed class RouteScenariosTests
     }
 
     [Fact]
+    public async Task GetOrderAssignments_ReturnsCourierAndRouteStatus()
+    {
+        await using var testDb = await TestDatabase.CreateAsync();
+        var clock = new MutableTimeProvider(Morning);
+        var (first, _, _) = await SeedOrdersAsync(testDb, Date);
+
+        await using var db = testDb.NewContext();
+        var routes = new RouteService(db, clock);
+        var draft = await routes.EnsureDraftAsync(TestDatabase.TenantId, TestDatabase.CourierId, Date);
+        await routes.SetStopsAsync(TestDatabase.TenantId, draft.Id, [first]);
+
+        var assignments = await routes.GetOrderAssignmentsAsync(
+            TestDatabase.TenantId,
+            [first]);
+
+        var assignment = Assert.Single(assignments);
+        Assert.Equal(first, assignment.OrderId);
+        Assert.Equal("Test Courier", assignment.CourierName);
+        Assert.Equal(RouteStatus.Draft, assignment.Status);
+    }
+
+    [Fact]
     public async Task SetStopsAndConfirm_AppendRouteChanges()
     {
         await using var testDb = await TestDatabase.CreateAsync();
